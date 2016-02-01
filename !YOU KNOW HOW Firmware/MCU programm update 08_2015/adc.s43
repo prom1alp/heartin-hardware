@@ -1,0 +1,398 @@
+#include        "msp430x54xA.h"
+#include        "register.h"
+#include        "adc.h"
+#include        "main.h"
+;________________________________________________________________________________________________________________
+EXTERN          DeviceMode
+EXTERN          DeviceEvent
+EXTERN          BTMode
+EXTERN          BTModeTX
+EXTERN          BTSampleCount
+EXTERN          BTADCCount
+EXTERN          BTADCCountEnd
+EXTERN          BTFilerSize
+EXTERN          BTFiler
+EXTERN          SendBTPacket
+EXTERN          USBMode
+EXTERN          USBModeTX
+EXTERN          USBSampleCount
+EXTERN          USBADCCount
+EXTERN          USBADCCountEnd
+EXTERN          USBFilerSize
+EXTERN          USBFiler
+EXTERN          SendUSBPacket
+EXTERN          MakeFilter
+;________________________________________________________________________________________________________________
+EXPORT          InitADC
+EXPORT          ADCOn
+EXPORT          ADCOff
+EXPORT          ADCBufInPnt
+EXPORT          ADC_Data_Rutine
+EXPORT          Mode1FilterSize
+EXPORT          Mode1Filter
+EXPORT          Mode2FilterSize
+EXPORT          Mode2Filter
+EXPORT          Mode3FilterSize
+EXPORT          Mode3Filter
+EXPORT          FilterBuffer
+;################################################################################################################
+                RSEG                  DATA16_N                        ;сегмент данных
+;________________________________________________________________________________________________________________
+ADCBufInPnt     DS                    2                               ;указатель на буфер АЦП
+ADCBufOutPnt    DS                    2                               ;указатель на буфер АЦП
+ADCBuffer       DS                    ADCBuffSize                     ;буфер АЦП
+ADCTxData       DS                    2                               ;переменная для передачи в АЦП при считывании
+FilterBufPnt    DS                    2                               ;указатель на буфер фильтра
+FilterBufPntOld DS                    2                               ;указатель на буфер фильтра
+FilterBuffer    DS                    FilterBuffSize                  ;буфер фильтра
+OutBuffer       DS                    8*3+2                           ;буфер выходного отсчета фильтра
+;################################################################################################################
+                RSEG                  CODE                            ;сегмент кода программы
+;________________________________________________________________________________________________________________
+ADC_Data_Rutine ;обработка данных от АЦП
+                dint
+                cmp.w                 &ADCBufInPnt,&ADCBufOutPnt      ;проверяем наличие данных
+                jne                   Is_ADC_Data
+                _CLEAR_EVENT_         ADC_Data_Event                  ;сбрасываем событие
+                eint
+                ret
+Is_ADC_Data     eint
+                ;обрабатываем данные
+                mov.w                 &ADCBufOutPnt,REG1              ;откуда читать
+                add.w                 #3,REG1                         ;добавляем смещение 1 канала
+                mov.w                 &FilterBufPnt,REG2              ;куда читать данные
+                ;I
+                mov.b                 @REG1+,REG4                     ;старший байт
+                mov.b                 @REG1+,REG5                     ;средний байт
+                swpb                  REG4
+                add.w                 REG5,REG4                       ;MSW
+                mov.w                 REG4,2(REG2)                    ;MSW
+                mov.b                 @REG1+,REG4                     ;младший байт
+                swpb                  REG4                            ;LSW
+                mov.w                 REG4,0(REG2)                    ;LSW
+                ;II
+                mov.b                 @REG1+,REG4                     ;старший байт
+                mov.b                 @REG1+,REG5                     ;средний байт
+                swpb                  REG4
+                add.w                 REG5,REG4                       ;MSW
+                mov.w                 REG4,6(REG2)                    ;MSW
+                mov.b                 @REG1+,REG4                     ;младший байт
+                swpb                  REG4                            ;LSW
+                mov.w                 REG4,4(REG2)                    ;LSW
+                ;V1
+                mov.b                 @REG1+,REG4                     ;старший байт
+                mov.b                 @REG1+,REG5                     ;средний байт
+                swpb                  REG4
+                add.w                 REG5,REG4                       ;MSW
+                mov.w                 REG4,10(REG2)                   ;MSW
+                mov.b                 @REG1+,REG4                     ;младший байт
+                swpb                  REG4                            ;LSW
+                mov.w                 REG4,8(REG2)                    ;LSW
+                ;V6
+                mov.b                 @REG1+,REG4                     ;старший байт
+                mov.b                 @REG1+,REG5                     ;средний байт
+                swpb                  REG4
+                add.w                 REG5,REG4                       ;MSW
+                mov.w                 REG4,30(REG2)                   ;MSW
+                mov.b                 @REG1+,REG4                     ;младший байт
+                swpb                  REG4                            ;LSW
+                mov.w                 REG4,28(REG2)                   ;LSW
+                ;V5
+                mov.b                 @REG1+,REG4                     ;старший байт
+                mov.b                 @REG1+,REG5                     ;средний байт
+                swpb                  REG4
+                add.w                 REG5,REG4                       ;MSW
+                mov.w                 REG4,26(REG2)                   ;MSW
+                mov.b                 @REG1+,REG4                     ;младший байт
+                swpb                  REG4                            ;LSW
+                mov.w                 REG4,24(REG2)                   ;LSW
+                ;V4
+                mov.b                 @REG1+,REG4                     ;старший байт
+                mov.b                 @REG1+,REG5                     ;средний байт
+                swpb                  REG4
+                add.w                 REG5,REG4                       ;MSW
+                mov.w                 REG4,22(REG2)                   ;MSW
+                mov.b                 @REG1+,REG4                     ;младший байт
+                swpb                  REG4                            ;LSW
+                mov.w                 REG4,20(REG2)                   ;LSW
+                ;V3
+                mov.b                 @REG1+,REG4                     ;старший байт
+                mov.b                 @REG1+,REG5                     ;средний байт
+                swpb                  REG4
+                add.w                 REG5,REG4                       ;MSW
+                mov.w                 REG4,18(REG2)                   ;MSW
+                mov.b                 @REG1+,REG4                     ;младший байт
+                swpb                  REG4                            ;LSW
+                mov.w                 REG4,16(REG2)                   ;LSW
+                ;V2
+                mov.b                 @REG1+,REG4                     ;старший байт
+                mov.b                 @REG1+,REG5                     ;средний байт
+                swpb                  REG4
+                add.w                 REG5,REG4                       ;MSW
+                mov.w                 REG4,14(REG2)                   ;MSW
+                mov.b                 @REG1+,REG4                     ;младший байт
+                swpb                  REG4                            ;LSW
+                mov.w                 REG4,12(REG2)                   ;LSW
+                ;увеличиваем указатель на данные АЦП
+                mov.w                 &ADCBufOutPnt,REG1
+                add.w                 #ADCSampleSize,REG1
+                cmp.w                 #ADCBuffer+ADCBuffSize,REG1
+                jlo                   NoADCBufOutBrd
+                mov.w                 #ADCBuffer,REG1
+NoADCBufOutBrd  mov.w                 REG1,&ADCBufOutPnt
+                mov.w                 &FilterBufPnt,REG1              ;увеличиваем указатель на данные фильтра
+                mov.w                 REG1,&FilterBufPntOld           ;копия
+                add.w                 #FilterSampleSize,REG1
+                cmp.w                 #FilterBuffer+FilterBuffSize,REG1
+                jlo                   NoFiltBufBrd
+                mov.w                 #FilterBuffer,REG1
+NoFiltBufBrd    mov.w                 REG1,&FilterBufPnt
+                ;обрабатываем данные по BT
+                tst.w                 &BTMode
+                jz                    NoBTData
+                inc.w                 &BTADCCount                     ;увеличиваем счетчик прореживания
+                cmp.w                 &BTADCCountEnd,&BTADCCount
+                jlo                   NoBTData
+                ;фильтруем и передаем данные по BT
+                clr.w                 &BTADCCount                     ;сброс счетчика прореживания
+                mov.w                 &FilterBufPntOld,REG1           ;указатель на данные
+                mov.w                 #OutBuffer,REG2                 ;указатель на выходной буфер
+                mov.w                 &BTFiler,REG3                   ;указатель на коэффициенты фильтра
+                mov.w                 &BTFilerSize,REG4               ;размер фильтра
+                call                  #MakeFilter                     ;фильтруем
+                mov.w                 #OutBuffer,REG1                 ;указатель на выходной буфер
+                mov.w                 &BTSampleCount,24(REG1)         ;счетчик отсчетов
+                mov.w                 &BTModeTX,REG1                  ;признак пакета
+                mov.w                 #8*3+2,REG2                     ;количество данных
+                mov.w                 #OutBuffer,REG3                 ;указатель на данные
+                call                  #SendBTPacket                   ;передаем данные
+                inc.w                 &BTSampleCount                  ;увеличиваем счетчик отсчетов 
+NoBTData        ;обрабатываем данные по USB                
+                tst.w                 &USBMode                        ;проверяем режим
+                jz                    NoUSBData
+                inc.w                 &USBADCCount                    ;увеличиваем счетчик прореживания
+                cmp.w                 &USBADCCountEnd,&USBADCCount
+                jlo                   NoUSBData
+                ;фильтруем и передаем данные по USB
+                clr.w                 &USBADCCount                    ;сброс счетчика прореживания
+                mov.w                 &FilterBufPntOld,REG1           ;указатель на данные
+                mov.w                 #OutBuffer,REG2                 ;указатель на выходной буфер
+                mov.w                 &USBFiler,REG3                  ;указатель на коэффициенты фильтра
+                mov.w                 &USBFilerSize,REG4              ;размер фильтра
+                call                  #MakeFilter                     ;фильтруем
+                mov.w                 #OutBuffer,REG1                 ;указатель на выходной буфер
+                mov.w                 &USBSampleCount,24(REG1)        ;счетчик отсчетов
+                mov.w                 &USBModeTX,REG1                 ;признак пакета
+                mov.w                 #8*3+2,REG2                     ;количество данных
+                mov.w                 #OutBuffer,REG3                 ;указатель на данные
+                call                  #SendUSBPacket                  ;передаем данные
+                inc.w                 &USBSampleCount                 ;увеличиваем счетчик отсчетов 
+NoUSBData       ret
+;________________________________________________________________________________________________________________
+InitADC         ;начальная инициализация АЦП
+                ;настраиваем UCB0 для приема данных от АЦП
+                mov.b                 #UCMSB+UCMST+UCMODE_0+UCSYNC,&UCB0CTL0 ;polarity, MSB first, master mode, 3-pin SPI, Synchronous mode
+                mov.b                 #UCSSEL_3+UCSWRST,&UCB0CTL1     ;SMCLK + reset
+                mov.b                 #2,&UCB0BR0                     ;делитель 2 от SMCLK
+                mov.b                 #0,&UCB0BR1
+                bic.b                 #UCSWRST,&UCB0CTL1              ;убираем reset
+                bis.b                 #0x0E,&P3SEL                    ;SDI, SO и SCLK как переферия
+                bis.b                 #0x01,&P3OUT                    ;CS = 1
+                ;настраиваем DMA0 для чтения данных АЦП
+                bis.w                 #DMA0TSEL_18,&DMACTL0           ;DMA0 USCIB0RXIFG
+                mov.w                 #DMADT_0+DMADSTINCR_3+DMASRCINCR_0+DMADSTBYTE+DMASRCBYTE+DMALEVEL+DMAIE,&DMA0CTL  ;single transfer, destination address incremented, source address unchanged, byte to byte, interrupt enable
+                mov.w                 #ADCSampleSize,&DMA0SZ          ;размер блока
+                mov.w                 #UCB0RXBUF,&DMA0SAL             ;UCB1RXBUF
+                ;настраиваем DMA1 для передачи данных флеш
+                clr.w                 &ADCTxData                      ;состояние пременной, которую передаем
+                bis.w                 #DMA1TSEL_19,&DMACTL0           ;DMA1 UCB0TXIFG
+                mov.w                 #DMADT_0+DMADSTINCR_0+DMASRCINCR_0+DMADSTBYTE+DMASRCBYTE+DMALEVEL,&DMA1CTL  ;single transfer, destination address unchanged,, source address unchanged, byte to byte
+                mov.w                 #ADCSampleSize,&DMA1SZ          ;размер блока
+                mov.w                 #ADCTxData,&DMA1SAL             ;передаем ADCTxData=0
+                mov.w                 #UCB0TXBUF,&DMA1DAL             ;адрес куда записывать
+                ;настраиваем TB0 для тактирования АЦП
+                mov.w                 #TBCLGRP_0+CNTL__16+TBSSEL_2+ID_0+MC_0+TBCLR,&TB0CTL ;loads independently, 16 bit, SMCLK, /1, stop, сброс
+                mov.w                 #6-1,&TB0CCR0                   ;CLK 2.048MHz от 12.288MHz
+                ;настраиваем TB0.2
+                mov.w                 #3,&TB0CCR2                     ;скважность SCLK
+                mov.w                 #OUTMOD_3,&TB0CCTL2             ;режим SET/RESET
+                ret
+;________________________________________________________________________________________________________________
+ADCOn           ;включение АЦП
+                _TEST_MODE_           AnalogON
+                jz                    NeedAnalogOn
+                ret
+NeedAnalogOn    ;включаем
+                _SET_MODE_            AnalogON                        ;признак включения
+                bic.b                 #0x40,&P3OUT                    ;включаем аналоговое питание
+                mov.w                 #TBCLGRP_0+CNTL__16+TBSSEL_2+ID_0+MC_1+TBCLR,&TB0CTL ;разрешаем счет таймера
+                bis.b                 #0x04,&P4SEL                    ;выход таймера как переферия
+                bis.b                 #0x80,&P3OUT                    ;убираем PWDN
+                bis.b                 #0x02,&P4OUT                    ;убираем RESET
+                mov.w                 #ADCBuffer,&ADCBufInPnt         ;указатели буферов на начало
+                mov.w                 #ADCBuffer,&ADCBufOutPnt
+                mov.w                 #FilterBuffer,&FilterBufPnt
+                mov.w                 #FilterBuffer,REG1              ;очищаем буфер фильтра
+                mov.w                 #FilterBuffSize/2,REG2
+ClearFiltBuf    clr.w                 0(REG1)
+                incd.w                REG1
+                dec.w                 REG2
+                jnz                   ClearFiltBuf
+                _SETUP_WDT_
+                _POWERUP_PAUSE_                                       ;0.3 c
+                _SETUP_WDT_
+                bic.b                 #0x02,&P4OUT                    ;ставим RESET
+                _RESET_PAUSE_
+                bis.b                 #0x02,&P4OUT                    ;убираем RESET
+                _RESETEN_PAUSE_
+                mov.w                 #SDATAC,REG1                    ;комманда Stop Read Data Continuously mode
+                call                  #SendADCCommand                 ;передаем
+//                mov.w                 #ReadADCRegister,REG1           ;комманда установки регистров АЦП
+//                call                  #SendADCCommand                 ;передаем
+//                nop
+                mov.w                 #SetADCRegister1,REG1           ;комманда установки регистров АЦП
+                call                  #SendADCCommand                 ;передаем
+                mov.w                 #SetADCRegister2,REG1           ;комманда установки регистров АЦП
+                call                  #SendADCCommand                 ;передаем
+                mov.w                 #RDATAC,REG1                    ;комманда Enable Read Data Continuous mode
+                call                  #SendADCCommand                 ;передаем
+                bis.b                 #0x01,&P4OUT                    ;START
+                bis.b                 #0x80,&P2IES                    ;настраиваем прерывание ECG_DRDY на спад
+                bic.b                 #0x80,&P2IFG
+                bis.b                 #0x80,&P2IE
+                ret
+;________________________________________________________________________________________________________________
+ADCOff          ;выключение АЦП
+                tst.w                 &BTMode                         ;проверяем режим BT
+                jnz                   NoOff
+                tst.w                 &USBMode                        ;проверяем режим USB
+                jnz                   NoOff
+                _TEST_MODE_           AnalogON
+                jnz                   NeedAnalogOff
+NoOff           ret
+NeedAnalogOff   ;выключаем
+                _RESET_MODE_          AnalogON                        ;признак включения
+                bic.b                 #0x01,&P4OUT                    ;STOP
+                _SETUP_WDT_
+                _PWROFF_PAUSE_
+                _SETUP_WDT_
+                bic.b                 #0x80,&P2IE                     ;запрет прерываний DRDY
+                bic.b                 #0x80,&P3OUT                    ;PWDN
+                bic.b                 #0x02,&P4OUT                    ;ставим RESET
+                mov.w                 #TBCLGRP_0+CNTL__16+TBSSEL_2+ID_0+MC_0+TBCLR,&TB0CTL ;запрещаем счет таймера
+                bic.b                 #0x04,&P4SEL                    ;выход таймера как IO
+                bis.b                 #0x40,&P3OUT                    ;выключаем аналоговое питание
+                mov.w                 #ADCBuffer,&ADCBufInPnt         ;указатели буферов на начало
+                mov.w                 #ADCBuffer,&ADCBufOutPnt
+                ret
+;________________________________________________________________________________________________________________
+SendADCCommand  ;передача комманды в АЦП
+;REG1 - указатель на комманду
+                _CS_PAUSE_
+                mov.b                 &UCB0RXBUF,REG3                 ;сброс прерывания на прием
+                mov.b                 @REG1+,REG2                     ;длина передаваемой комманды
+                bic.b                 #0x01,&P3OUT                    ;CS = 0
+SendCommand     mov.b                 @REG1+,&UCB0TXBUF               ;передаем
+WaitSendByte    bit.b                 #UCRXIFG,&UCB0IFG
+                jz                    WaitSendByte
+                mov.b                 &UCB0RXBUF,REG3                 ;сброс прерывания на прием
+                dec.w                 REG2
+                jnz                   SendCommand
+                _CS_PAUSE_
+                bis.b                 #0x01,&P3OUT                    ;CS = 1
+                ret
+;________________________________________________________________________________________________________________
+DMA_Rutine      ;обработка прерываний DMA
+                add                   &DMAIV,PC
+                reti                                                  ;no int
+                jmp                   End_ADC_Data                    ;DMA channel 0 End ADC Data Read
+                reti                                                  ;DMA channel 1
+                reti                                                  ;DMA channel 2
+                reti                                                  ;DMA channel 3
+                reti                                                  ;DMA channel 4
+                reti                                                  ;DMA channel 5
+                reti                                                  ;DMA channel 6
+                reti                                                  ;DMA channel 7
+;________________________________________________________________________________________________________________
+End_ADC_Data    ;окончание чтения данных из АЦП
+                bic.w                 #LPM3,0(SP)                     ;просыпаемся
+                _SET_EVENT_           ADC_Data_Event                  ;ставим событие
+                push.w                REG1
+                mov.w                 &ADCBufInPnt,REG1               ;изменяем указатель на данные
+                add.w                 #ADCSampleSize,REG1
+                cmp.w                 #ADCBuffer+ADCBuffSize,REG1
+                jlo                   NoADCIntBufBrd
+                mov.w                 #ADCBuffer,REG1
+NoADCIntBufBrd  mov.w                 REG1,&ADCBufInPnt               ;сохраняем указатель
+                bis.b                 #0x01,&P3OUT                    ;CS = 0
+                pop.w                 REG1
+                reti
+;################################################################################################################
+                RSEG                  DATA16_C                        ;сегмент констант
+;________________________________________________________________________________________________________________
+;комманда Stop Read Data Continuously mode 
+SDATAC          DB                    0x01                            ;длина комманды
+                DB                    0x11                            ;SDATAC
+;комманда Enable Read Data Continuous mode
+RDATAC          DB                    0x01                            ;длина комманды
+                DB                    0x10                            ;RDATAC
+
+;________________________________________________________________________________________________________________
+;комманда установки регистров АЦП
+ReadADCRegister DB                    2+1                             ;длина - 2 служебных байта и 1 регистр
+                DB                    0x20                            ;RREG с адреса 0xXX
+                DB                    1-1                             ;чтение 1 регистра
+                DB                    0x00                            ;
+;________________________________________________________________________________________________________________
+;комманда установки регистров АЦП
+SetADCRegister1 DB                    2+17                            ;длина - 2 служебных байта и 17 регистров
+                DB                    0x41                            ;WREG с адреса 0x01
+                DB                    17-1                            ;запись 17 регистров
+                DB                    0x85                            ;01 - 0x01 - CONFIG1 (1кГц)
+                DB                    0x00                            ;02 - 0x02 - CONFIG2
+                DB                    0xE4                            ;03 - 0x03 - CONFIG3
+                DB                    0x00                            ;04 - 0x04 - LOFF
+                DB                    0x60                            ;05 - 0x05 - CH1SET (x12)
+                DB                    0x60                            ;06 - 0x06 - CH2SET (x12)
+                DB                    0x60                            ;07 - 0x07 - CH3SET (x12)
+                DB                    0x60                            ;08 - 0x08 - CH4SET (x12)
+                DB                    0x60                            ;09 - 0x09 - CH5SET (x12)
+                DB                    0x60                            ;10 - 0x0A - CH6SET (x12)
+                DB                    0x60                            ;11 - 0x0B - CH7SET (x12)
+                DB                    0x60                            ;12 - 0x0C - CH8SET (x12)
+                DB                    0x00                            ;13 - 0x0D - RLD_SENSP
+                DB                    0x00                            ;14 - 0x0E - RLD_SENSN
+                DB                    0x00                            ;15 - 0x0F - LOFF_SENSP
+                DB                    0x00                            ;16 - 0x10 - LOFF_SENSN
+                DB                    0x00                            ;17 - 0x11 - LOFF_FLIP
+;________________________________________________________________________________________________________________
+;комманда установки регистров АЦП
+SetADCRegister2 DB                    2+6                             ;длина - 2 служебных байта и 6 регистров
+                DB                    0x54                            ;WREG с адреса 0x14
+                DB                    6-1                             ;запись 6 регистров
+                DB                    0x00                            ;01 - 0x14 - GPIO
+                DB                    0x00                            ;02 - 0x15 - PACE
+                DB                    0x00                            ;03 - 0x16 - RESP
+                DB                    0x04                            ;04 - 0x17 - CONFIG4 (WCT_TO_RLD)
+                DB                    0x09                            ;05 - 0x18 - WCT1
+                DB                    0xC2                            ;06 - 0x19 - WCT2
+;################################################################################################################
+                RSEG                  DATA16_C                        ;сегмент констант
+;________________________________________________________________________________________________________________
+;фильтр 250Гц
+Mode1FilterSize DW                    101
+Mode1Filter     
+#include        "filter250Hz.h"
+Mode2FilterSize DW                    51
+Mode2Filter     
+#include        "filter500Hz.h"
+Mode3FilterSize DW                    1
+Mode3Filter     
+#include        "filter1000Hz.h"
+;################################################################################################################
+                COMMON                INTVEC                          ;сегмент векторов прерываний
+;________________________________________________________________________________________________________________
+                ORG                   DMA_VECTOR                      ;DMA
+                DW                    DMA_Rutine
+;################################################################################################################
+                END

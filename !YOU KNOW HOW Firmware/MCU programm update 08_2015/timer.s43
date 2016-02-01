@@ -1,0 +1,182 @@
+#include        "msp430x54xA.h"
+#include        "register.h"
+#include        "main.h"
+#define         BatBufSize            10
+;______________________________________________________________________________________________________ 
+EXTERN          DeviceEvent
+EXTERN          DeviceMode
+EXTERN          USBMode
+EXTERN          BT10HzEvent
+EXTERN          USB_Voltage_Rutine
+;______________________________________________________________________________________________________ 
+EXPORT          InitTimer
+EXPORT          TMR_10Hz_Rutine
+EXPORT          Bat_ADC_Rutine
+EXPORT          Battery
+;######################################################################################################
+                RSEG                  DATA16_N                        ;сегмент данных
+;______________________________________________________________________________________________________ 
+TimerCount      DS                    2                               ;счетчик индикации
+BatteryBufIn    DS                    2                               ;указатель на буффер
+BatteryBufOut   DS                    2                               ;указатель на буффер
+BatteryBuffer   DS                    BatBufSize                      ;буффер батареии
+Battery         DS                    4                               ;заряд батареи и признак
+BatSum          DS                    4                               ;сумматор батареи
+BatSumCount     DS                    2                               ;счетчик суммирования
+;######################################################################################################
+                RSEG                  DATA16_C                        ;сегмент констант
+;______________________________________________________________________________________________________ 
+BatteryVolage   ;напряжение батареи в зависимости от емкости 0xFFFF = 2.5В
+                DW                    33947                           ;1.295B -  95%
+                DW                    33816                           ;1.290В -  90%
+                DW                    33685                           ;1.285B -  85%
+                DW                    33554                           ;1.280B -  80%
+                DW                    33423                           ;1.275B -  75%
+                DW                    33292                           ;1.270B -  70%
+                DW                    33161                           ;1.265B -  65%
+                DW                    33030                           ;1.260В -  60%
+                DW                    32899                           ;1.255В -  55%
+                DW                    32768                           ;1.250В -  50%
+                DW                    32558                           ;1.242В -  45%
+                DW                    32322                           ;1.233В -  40%
+                DW                    32112                           ;1.225В -  35%
+                DW                    31902                           ;1.217В -  30%
+                DW                    31667                           ;1.208В -  25%
+                DW                    31457                           ;1.200В -  20%
+                DW                    30801                           ;1.175В -  15%
+                DW                    30146                           ;1.150В -  10%
+                DW                    29491                           ;1.125В -   5%
+                DW                    27525                           ;1.050В -   0%
+
+;######################################################################################################
+                RSEG                  CODE                            ;сегмент кода программы
+;______________________________________________________________________________________________________
+BatteryTest     ;обработка данных батереии
+;REG1 - указатель на данные
+                mov.w                 @REG1,REG1                      ;читаем данные
+                add.w                 REG1,&BatSum                    ;накапливаем данные
+                adc.w                 &BatSum+2
+                inc.w                 &BatSumCount                    ;инкрементируем счатчик накопления
+                cmp.w                 #64,&BatSumCount                ;проверяем что накопили нужное количество 64 (отчет в 6.4сек)
+                jhs                   IsBattData
+                ret
+IsBattData      clr.w                 &BatSumCount                    ;сброс счетчика
+                mov.w                 &BatSum,REG1                    ;данные
+                mov.w                 &BatSum+2,REG2
+                clr.w                 &BatSum                         ;сброс суммы
+                clr.w                 &BatSum+2
+                rrc.w                 REG2                            ;сдвигаем вправо для получения 16 бит
+                rrc.w                 REG1
+                rrc.w                 REG2
+                rrc.w                 REG1                            ;нормированные данные
+                mov.w                 #BatteryVolage,REG2             ;указатель на таблицу напряжений
+                mov.w                 #100,REG3                       ;100%
+VoltageTest     cmp.w                 @REG2+,REG1
+                jhs                   EndVoltageTest
+                sub.w                 #5,REG3
+                jnz                   VoltageTest
+EndVoltageTest  mov.w                 REG3,&Battery                   ;обновляем данные
+                ret
+;________________________________________________________________________________________________________________
+Bat_ADC_Rutine  mov.w                 &BatteryBufOut,REG1             ;указатель на данные батареи
+                call                  #BatteryTest
+                mov.w                 &BatteryBufOut,REG1             ;указатель на данные
+                add.w                 #2,REG1                         ;увеличиваем указатель
+                cmp.w                 #BatteryBuffer+BatBufSize,REG1
+                jlo                   NoTestDatBufBrd
+                mov.w                 #BatteryBuffer,REG1
+NoTestDatBufBrd mov.w                 REG1,&BatteryBufOut             ;сохраняем указатель
+                dint
+                cmp.w                 &BatteryBufIn,REG1              ;проверка наличия данных
+                jne                   NoClearBatEv
+                _CLEAR_EVENT_         Bat_ADC_Event                   ;сбрасываем событие
+NoClearBatEv    eint                
+                ret
+;________________________________________________________________________________________________________________
+InitTimer       ;начальная инициализация таймера TA1
+                clr.w                 &TimerCount                     ;сброс счетчика индикации
+                mov.w                 #3276,TA1CCR0                   ;сброс таймера 10 раз в секунду
+                mov.w                 #(TASSEL_1+ID_0+MC_1+TACLR),&TA1CTL ;ACLK,/1,up to CCR0
+                mov.w                 #CCIE+OUTMOD_2,&TA1CCTL0        ;разрешаем прерывание по CCR0
+                ;настраиваем внутренний АЦП
+                mov.w                 #BatteryBuffer,&BatteryBufIn    ;начальное значение указателя
+                mov.w                 #BatteryBuffer,&BatteryBufOut
+                bic.w                 #REFMSTR,&REFCTL0               ;управление опорником через АЦП
+                mov.w                 #ADC12REF2_5V+ADC12ON+ADC12REFON+ADC12SHT0_2+ADC12MSC,&ADC12CTL0;опорное 2.5В, включаем АЦП и REF, УВХ - 16 тактов (5.2мкс), multiple sample and conversion
+                mov.w                 #ADC12CSTARTADD_0+ADC12SHP+ADC12SSEL_0+ADC12DIV_1+ADC12CONSEQ_1,&ADC12CTL1;ADC12SC, ADC12OSC/2 (2.7MHz), Sequence-of-channels, SAMPCON signal is sourced from the sampling timer
+                mov.w                 #ADC12RES_2+ADC12REFBURST,&ADC12CTL2;12 bit, Reference buffer on only during sample-and-conversion
+                mov.b                 #ADC12SREF_1+ADC12INCH_0+ADC12EOS,&ADC12MCTL0 ;BATT ,опорное VREF
+                clr.w                 &ADC12IFG                       ;сброс прерывания АЦП
+                bis.w                 #0x0001,&ADC12IE                ;разрешаем прерывание АЦП
+                mov.w                 #100,&Battery                   ;100% заряд
+                clr.w                 &Battery+2                      ;признак работы от аккума
+                clr.w                 &BatSum                         ;очищаем сумму данных батареи
+                clr.w                 &BatSum+2                       ;очищаем сумму данных батареи
+                clr.w                 &BatSumCount                    ;очищаем счетчик суммы батареи
+                ret
+;________________________________________________________________________________________________________________
+TMR_10Hz_Rutine ;обработка события 10Гц
+                _CLEAR_EVENT_         TMR_10Hz_Event                  ;сброс события
+                call                  #BT10HzEvent                    ;обработка события BT
+                call                  #USB_Voltage_Rutine
+                bis.w                 #ADC12ENC+ADC12SC,&ADC12CTL0    ;разрешаем и стартуем преобразование внутреннего АЦП
+                ;индикация Green LED
+                bic.b                 #0xA0,&P7OUT                    ;выключаем GreenLED и BlueLED
+                cmp.w                 #0,&TimerCount
+                jne                   NoGreenOnInd
+                bis.b                 #0x80,&P7OUT                    ;включаем GreenLED - индикация работа
+NoGreenOnInd   ;индикация Blue LED
+                bic.b                 #0x20,&P7OUT                    ;выключаем GreenLED
+                _TEST_MODE_           BTConnect
+                jz                    BlueIndEnd
+                bit.w                 #0x0003,&TimerCount
+                jnz                   BlueIndEnd
+                bis.b                 #0x20,&P7OUT                    ;включаем BlueLED - Ind   
+BlueIndEnd      ;индикация Green LED
+                _TEST_MODE_           USBConnect
+                jz                    GreenIndEnd
+                tst.w                 &USBMode
+                jz                    NoNeedTXInd
+                bit.w                 #0x0003,&TimerCount
+                jnz                   GreenIndEnd
+                bis.b                 #0x80,&P7OUT                    ;включаем GreenLED - предача данных
+                jnz                   GreenIndEnd
+                
+NoNeedTXInd     bit.w                 #0x0007,&TimerCount
+                jnz                   GreenIndEnd
+                bis.b                 #0x80,&P7OUT                    ;включаем GreenLED - Power
+GreenIndEnd     ;инкремент таймера
+                inc.w                 &TimerCount
+                cmp.w                 #16,&TimerCount                 ;период 1.6 сек
+                jlo                   NoTimeOverfl
+                clr.w                 &TimerCount
+NoTimeOverfl    ret
+;________________________________________________________________________________________________________________
+TIMER1_A0_Procedure ;прерывание 10 раз в секунду
+                bic.w                 #LPM3,0(SP)                     ;просыпаемся
+                _SET_EVENT_           TMR_10Hz_Event                  ;ставим событие
+                reti
+;______________________________________________________________________________________________________ 
+;прерывание АЦП
+ADC12_Routine   bic.w                 #LPM0,0(SP)                     ;просыпаемся
+                _SET_EVENT_           Bat_ADC_Event                   ;ставим событие
+                push.w                REG1
+                mov.w                 &BatteryBufIn,REG1              ;указатель на данные
+                mov.w                 &ADC12MEM0,0(REG1)              ;BATT
+                add.w                 #2,REG1
+                cmp.w                 #BatteryBuffer+BatBufSize,REG1
+                jlo                   NoBarBufBrdInt
+                mov.w                 #BatteryBuffer,REG1
+NoBarBufBrdInt  mov.w                 REG1,&BatteryBufIn              ;сохраняем указатель
+                pop.w                 REG1
+                reti
+;################################################################################################################
+                COMMON                INTVEC                          ;сегмент векторов прерываний
+;________________________________________________________________________________________________________________
+                ORG                   TIMER1_A0_VECTOR                ;Timer1_A3 CC0
+                DW                    TIMER1_A0_Procedure
+;______________________________________________________________________________________________________ 
+                ORG                   ADC12_VECTOR                    ;0xFFEE ADC
+                DW                    ADC12_Routine
+;################################################################################################################
+                END

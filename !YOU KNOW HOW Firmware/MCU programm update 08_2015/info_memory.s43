@@ -1,0 +1,69 @@
+#include        "msp430x54xA.h"
+#include        "register.h"
+#include        "main.h"
+#include        "serialprot.h"
+;______________________________________________________________________________________________________
+EXPORT          InitWriteInfoMemory
+EXPORT          WriteInfoMemoryBlock
+EXPORT          DeviceInfo
+;######################################################################################################
+                RSEG                  INFOB                           ;информационна€ пам€ть
+;______________________________________________________________________________________________________
+DeviceInfo      DS                    DevDataSize
+;######################################################################################################
+                RSEG                  DATA16_N                        ;сегмент данных
+;______________________________________________________________________________________________________
+FlashEraseRAM   DS                    FlashEraseROM_END-FlashEraseROM ;место дл€ процедуры стирани€
+;######################################################################################################
+                RSEG                  CODE                            ;сегмент кода программы
+;______________________________________________________________________________________________________
+InitWriteInfoMemory ;перенос процедуры стирани€ из ROM в RAM
+                mov.w                 #FlashEraseRAM,REG1
+                mov.w                 #FlashEraseROM,REG2
+                mov.w                 #FlashEraseROM_END-FlashEraseROM,REG3
+MoveROMtoRAM    mov.b                 @REG2+,0(REG1)
+                inc.w                 REG1
+                dec.w                 REG3
+                jnz                   MoveROMtoRAM
+                ret
+;______________________________________________________________________________________________________
+WriteInfoMemoryBlock  ;запись блока данных в информационную пам€ть
+;REG1 - указатель на данные
+;REG2 - указатель на блок пам€ти
+;REG3 - количество данных
+                cmp.w                 #0,REG3                         ;провер€ем наличие данных
+                jne                   IsWriteData
+                ret
+IsWriteData     cmp.w                 #128,REG3                       ;провер€ем что количество данных не превышает длину сегмента
+                jlo                   NoMaxData
+                mov.w                 #128,REG3
+NoMaxData       mov.w                 #FWKEY,&FCTL3                   ;снимаем бит защиты от записи
+FWKEYBUSY       bit.w                 #BUSY,&FCTL3
+                jnz                   FWKEYBUSY
+                _SETUP_WDT_                                           ;reset WDT
+                mov.w                 #(FWKEY+ERASE),&FCTL1           ;режим стирани€
+                call                  #FlashEraseRAM                  ;стираем блок в информационной пам€ти
+                mov.w                 #(FWKEY+WRT),&FCTL1             ;ставим режим записи
+                ;пишем данные
+                _SETUP_WDT_                                           ;reset WDT
+WriteFlashAgain mov.b                 @REG1+,0(REG2)                  ;пишем байт в информационную пам€ть
+WriteTimeout    bit.w                 #BUSY,&FCTL3
+                jnz                   WriteTimeout
+                inc.w                 REG2
+                dec.w                 REG3
+                jnz                   WriteFlashAgain
+                mov.w                 #FWKEY,&FCTL1                   ;снимаем режим записи
+                mov.w                 #(FWKEY+LOCK),&FCTL3            ;устанавливаем бит защиты от записи
+                ret
+;______________________________________________________________________________________________________
+FlashEraseROM   ;процедура стирани€ блока в информационной пам€ти
+;REG2 - адрес блока
+                dint
+                clr.w                 0(REG2)
+WaitFlashErase  bit.w                 #BUSY,&FCTL3
+                jnz                   WaitFlashErase
+                eint
+                ret
+FlashEraseROM_END
+;######################################################################################################
+                END                                                   ;конец файла

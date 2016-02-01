@@ -1,0 +1,844 @@
+#include        "msp430x54xA.h"
+#include        "bluetooth.h"
+#include        "serialprot.h"
+#include        "register.h"
+#include        "main.h"
+#include        "adc.h"
+#define         TXBufSize             5000
+;________________________________________________________________________________________________________________
+EXTERN          DeviceTypeVer
+EXTERN          DeviceMode
+EXTERN          DeviceEvent
+EXTERN          GeneratorOn
+EXTERN          GeneratorOff
+EXTERN          ADCOn
+EXTERN          ADCOff
+EXTERN          Mode1FilterSize
+EXTERN          Mode1Filter
+EXTERN          Mode2FilterSize
+EXTERN          Mode2Filter
+EXTERN          Mode3FilterSize
+EXTERN          Mode3Filter
+EXTERN          DeviceInfo
+EXTERN          WriteInfoMemoryBlock
+EXTERN          Battery
+;________________________________________________________________________________________________________________
+EXPORT          SetupBT
+EXPORT          BT_LS_Rutine
+EXPORT          BT_WU_Rutine
+EXPORT          BT_RX_Rutine
+EXPORT          BTMode
+EXPORT          BTModeTX
+EXPORT          BTSampleCount
+EXPORT          BTADCCount
+EXPORT          BTADCCountEnd
+EXPORT          BTFilerSize
+EXPORT          BTFiler
+EXPORT          SendBTPacket
+EXPORT          BT10HzEvent
+EXPORT          BTMAC
+;################################################################################################################
+                RSEG                  DATA16_N                        ;сегмент данных
+;________________________________________________________________________________________________________________
+TX_Empty        DS                    2                               ;признак опустошения буфера передачи
+TXBufInPnt      DS                    2                               ;указатель на буфер
+TXBufOutPnt     DS                    2                               ;указатель на буфер
+TXBuffer        DS                    TXBufSize                       ;буфер передачи
+RXBufInPnt      DS                    2                               ;указатель на буфер
+RXBufOutPnt     DS                    2                               ;указатель на буфер
+RXBuffer        DS                    RXBufSize                       ;буфер приема
+RXCount         DS                    2                               ;счетчик приема
+RXError         DS                    2                               ;признак ошибки
+BOFPrizn        DS                    2                               ;признак BOF в пакете
+TogleStatus     DS                    2                               ;признак тогле
+PacketBuffer    DS                    MaxCommandSize                  ;буфер принятого пакета
+BTMode          DS                    2                               ;режим работы BT
+TXByteCount     DS                    2                               ;счетчик байт
+BTModeTX        DS                    2                               ;признак пакета при передаче данных
+BTSampleCount   DS                    2                               ;сетчик переданных отсчетов
+BTADCCount      DS                    2                               ;счетчик прореживания BT
+BTADCCountEnd   DS                    2                               ;прореживание BT
+BTFilerSize     DS                    2                               ;размер фильтра
+BTFiler         DS                    2                               ;указатель на коэффициенты фильтра
+BTTimeOut       DS                    2                               ;счетчик таймаута
+BTMAC           DS                    BTMACSize                       ;MAC адресс
+ATMode          DS                    2                               ;режим AT комманды
+;################################################################################################################
+                RSEG                  CODE                            ;сегмент кода программы
+;________________________________________________________________________________________________________________
+BT_WU_Rutine    ;обработка события WU
+                _CLEAR_EVENT_         BT_WU_Event                     ;сброс события
+                call                  #InitTX                         ;инициализируем передачу
+                ret
+;________________________________________________________________________________________________________________
+BT10HzEvent     ;обработка таймаута BT
+                call                  #InitTX                         ;инициализируем передачу
+                tst.w                 &BTTimeOut
+                jnz                   NeedDecTimeOut
+                ret
+NeedDecTimeOut  dec.w                 &BTTimeOut
+                jz                    ISBTTimeOut
+                ret
+ISBTTimeOut     ;обрабатываем таймаут
+                nop
+                nop
+                _RESET_MODE_          BTOn                            ;ставим признак не работы BT
+                _BT_WAKEUP_OFF_
+                call                  #GeneratorOff                   ;выключаем генератор если можно
+                ret
+;________________________________________________________________________________________________________________
+ValidATCmd      ;обработка приема AT комманды
+                _CALL_1DATA_          TestATCmd,#BTMACAddress         ;проверяем что принят MAC адрес
+                tst.w                 REG1
+                jz                    NoMacAddress
+                ;обрабатывае MAC адресс
+                cmp.w                 #ATModeInitReset,&ATMode
+                jne                   NoATModeInitRst
+                ;при начальном сбросе - переносим MAC и проверяем имя устройства
+                mov.w                 #PacketBuffer+16,REG1
+                mov.w                 #BTMAC,REG2
+                mov.w                 #BTMACSize,REG3
+MoveMACAdr      mov.b                 @REG1+,0(REG2)
+                inc.w                 REG2
+                dec.w                 REG3
+                jnz                   MoveMACAdr
+                mov.w                 #ATModeConfig00,&ATMode        ;ставим режим программирования конфигурации
+                mov.w                 #10,&BTTimeOut                 ;ставим таймаут 1c 
+                _CALL_1DATA_          SendATCmd,#DeviceConfig00
+                ret
+NoATModeInitRst cmp.w                 #ATModeWorkReset,&ATMode
+                jne                   NoATModeWorkRst
+                mov.w                 #ATModeSetBR,&ATMode           ;ставим режим программирования BR
+                mov.w                 #10,&BTTimeOut                 ;ставим таймаут 1c 
+                _CALL_1DATA_          SendATCmd,#SetBaudRate 
+                ret
+NoATModeWorkRst ;не должно быть, но на всякий случай
+                _RESET_MODE_          BTOn                            ;ставим признак не работы BT
+                _BT_WAKEUP_OFF_
+                ret
+NoMacAddress    _CALL_1DATA_          TestATCmd,#BTConfigOK           ;проверяем что ответ Config OK
+                tst.w                 REG1
+                jz                    NoBTConfigOK
+                call                  #BTCofig
+                ret
+NoBTConfigOK    _CALL_1DATA_          TestATCmd,#BTChangeBaud         ;проверяем что ответ смена BR
+                tst.w                 REG1
+                jz                    NoBTChangeBR
+                mov.w                 #26,&UCA0BRW                    ;460800 от 12.288МГц (2.6%)
+                mov.b                 #UCBRS_7,&UCA0MCTL              ;модуляция 0.7 (-0.1%)
+                clr.w                 &BTTimeOut                      ;сбрасываем таймаут
+                _RESET_MODE_          BTOn                            ;ставим признак не работы BT
+                _BT_WAKEUP_OFF_
+                mov.w                 #ATModeWork,&ATMode             ;ставим режим работы
+                call                  #GeneratorOff                   ;выключаем генератор если можно
+                ret
+NoBTChangeBR    ret                
+;________________________________________________________________________________________________________________
+BTCofig         ;конфигурация устройства
+                cmp.w                 #ATModeConfig00,&ATMode         ;проверяем Config OK 00
+                jne                   NoATConfig00
+                mov.w                 #ATModeConfig01,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig01
+                ret
+NoATConfig00    cmp.w                 #ATModeConfig01,&ATMode         ;проверяем Config OK 01
+                jne                   NoATConfig01
+                mov.w                 #ATModeConfig02,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig02
+                ret
+NoATConfig01    cmp.w                 #ATModeConfig02,&ATMode         ;проверяем Config OK 02
+                jne                   NoATConfig02
+                mov.w                 #ATModeConfig03,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig03
+                ret
+NoATConfig02    cmp.w                 #ATModeConfig03,&ATMode         ;проверяем Config OK 03
+                jne                   NoATConfig03
+                mov.w                 #ATModeConfig04,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig04
+                ret
+NoATConfig03    cmp.w                 #ATModeConfig04,&ATMode         ;проверяем Config OK 04
+                jne                   NoATConfig04
+                mov.w                 #ATModeConfig05,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig05
+                ret
+NoATConfig04    cmp.w                 #ATModeConfig05,&ATMode         ;проверяем Config OK 05
+                jne                   NoATConfig05
+                mov.w                 #ATModeConfig06,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig06
+                ret
+NoATConfig05    cmp.w                 #ATModeConfig06,&ATMode         ;проверяем Config OK 06
+                jne                   NoATConfig06
+                mov.w                 #ATModeConfig07,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig07
+                ret
+NoATConfig06    cmp.w                 #ATModeConfig07,&ATMode         ;проверяем Config OK 07
+                jne                   NoATConfig07
+                mov.w                 #ATModeConfig08,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig08
+                ret
+NoATConfig07    cmp.w                 #ATModeConfig08,&ATMode         ;проверяем Config OK 08
+                jne                   NoATConfig08
+                mov.w                 #ATModeConfig09,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig09
+                ret
+NoATConfig08    cmp.w                 #ATModeConfig09,&ATMode         ;проверяем Config OK 09
+                jne                   NoATConfig09
+                mov.w                 #ATModeConfig10,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig10
+                ret
+NoATConfig09    cmp.w                 #ATModeConfig10,&ATMode         ;проверяем Config OK 10
+                jne                   NoATConfig10
+                mov.w                 #ATModeConfig11,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig11
+                ret
+NoATConfig10    cmp.w                 #ATModeConfig11,&ATMode         ;проверяем Config OK 11
+                jne                   NoATConfig11
+                mov.w                 #ATModeConfig12,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig12
+                ret
+NoATConfig11    cmp.w                 #ATModeConfig12,&ATMode         ;проверяем Config OK 12
+                jne                   NoATConfig12
+                mov.w                 #ATModeConfig13,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig13
+                ret
+NoATConfig12    cmp.w                 #ATModeConfig13,&ATMode         ;проверяем Config OK 13
+                jne                   NoATConfig13
+                mov.w                 #ATModeConfig14,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig14
+                ret
+NoATConfig13    cmp.w                 #ATModeConfig14,&ATMode         ;проверяем Config OK 14
+                jne                   NoATConfig14
+                mov.w                 #ATModeConfig15,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig15
+                ret
+NoATConfig14    cmp.w                 #ATModeConfig15,&ATMode         ;проверяем Config OK 15
+                jne                   NoATConfig15
+                mov.w                 #ATModeConfig16,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig16
+                ret
+NoATConfig15    cmp.w                 #ATModeConfig16,&ATMode         ;проверяем Config OK 16
+                jne                   NoATConfig16
+                mov.w                 #ATModeConfig17,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig17
+                ret
+NoATConfig16    cmp.w                 #ATModeConfig17,&ATMode         ;проверяем Config OK 17
+                jne                   NoATConfig17
+                mov.w                 #ATModeConfig18,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig18
+                ret
+NoATConfig17    cmp.w                 #ATModeConfig18,&ATMode         ;проверяем Config OK 18
+                jne                   NoATConfig18
+                mov.w                 #ATModeConfig19,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig19
+                ret
+NoATConfig18    cmp.w                 #ATModeConfig19,&ATMode         ;проверяем Config OK 19
+                jne                   NoATConfig19
+                mov.w                 #ATModeConfig20,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig20
+                ret
+NoATConfig19    cmp.w                 #ATModeConfig20,&ATMode         ;проверяем Config OK 20
+                jne                   NoATConfig20
+                mov.w                 #ATModeConfig21,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig21
+                ret
+NoATConfig20    cmp.w                 #ATModeConfig21,&ATMode         ;проверяем Config OK 21
+                jne                   NoATConfig21
+                mov.w                 #ATModeConfig22,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig22
+                ret
+NoATConfig21    cmp.w                 #ATModeConfig22,&ATMode         ;проверяем Config OK 22
+                jne                   NoATConfig22
+                mov.w                 #ATModeConfig23,&ATMode
+                mov.w                 #10,&BTTimeOut
+                _CALL_1DATA_          SendATCmd,#DeviceConfig23
+                ret
+NoATConfig22    cmp.w                 #ATModeConfig23,&ATMode         ;проверяем Config OK 23
+                jne                   NoATConfig23
+                _BT_RESET_
+                _BT_WAKEUP_ON_
+                mov.w                 #ATModeWorkReset,&ATMode        ;ставим режим
+                mov.w                 #50,&BTTimeOut                  ;ставим таймаут включения 3c 
+                ret
+NoATConfig23    ;не должно быть, но на всякий случай
+                _RESET_MODE_          BTOn                            ;ставим признак не работы BT
+                _BT_WAKEUP_OFF_
+                call                  #GeneratorOff                   ;выключаем генератор если можно
+                ret
+;________________________________________________________________________________________________________________
+TestATCmd       ;обработка приема AT комманды
+;REG1 - указатель на шаблон комманды
+                mov.w                 #PacketBuffer,REG2              ;уазатель на принятую комманду
+TestNextByte    mov.b                 @REG1+,REG3
+                mov.b                 @REG2+,REG4
+                cmp.b                 #_LF_,REG3
+                jeq                   ValidATest
+                cmp.b                 #_BTD_,REG3
+                jeq                   TestNextByte
+                cmp.b                 REG3,REG4
+                jeq                   TestNextByte
+                clr.w                 REG1                            ;Error
+                ret
+ValidATest      mov.w                 #1,REG1                         ;OK
+                ret
+;________________________________________________________________________________________________________________
+SendATCmd       ;отправка AT комманды
+;REG1 - указатель на комманду
+                mov.w                 &TXBufInPnt,REG5                ;указатель на данные
+IsATCmd         mov.b                 @REG1+,REG2
+                _BYTE_TO_TXBUF_       REG2
+                cmp.w                 #_LF_,REG2
+                jne                   IsATCmd
+                mov.w                 REG5,&TXBufInPnt                ;сохраняем указатель на данные
+                call                  #InitTX                         ;инициализируем передачу
+                ret
+;________________________________________________________________________________________________________________
+SendBTPacket    ;передача пакета по BT
+;REG1 - признак пакета
+;REG2 - количество данных
+;REG3 - указатель на данные
+                mov.w                 &TXBufInPnt,REG5                ;указатель на данные
+                _INIT_CRC_                                            ;инициализация CRC
+                _BYTE_TO_TXBUF_       #BOF                            ;BOF
+                _ADD_CRC_             REG1                            ;признак
+                _BYTE_TO_TXBUF_       REG1
+                tst.w                 REG2                            ;проверяем наличие данных в пакета
+                jz                    SendBEPacketCRC
+SendBTPacByte   mov.b                 @REG3+,REG4
+                _ADD_CRC_             REG4                            ;данные
+                _DATA_TO_TXBUF_       REG4
+                dec.w                 REG2
+                jnz                   SendBTPacByte
+SendBEPacketCRC _MOV_CRC_             REG1                            ;LB CRC 
+                _DATA_TO_TXBUF_       REG1
+                _MOV_CRC_             REG1                            ;HB CRC
+                swpb                  REG1
+                _DATA_TO_TXBUF_       REG1
+                _BYTE_TO_TXBUF_       #EOF                            ;EOF
+                mov.w                 REG5,&TXBufInPnt                ;сохраняем указатель на данные
+                call                  #InitTX                         ;инициализируем передачу
+                ret
+;________________________________________________________________________________________________________________
+SetupBT         ;начальная инициализация BT
+                mov.w                 #TXBuffer,&TXBufInPnt           ;начальное значение указателей
+                mov.w                 #TXBuffer,&TXBufOutPnt
+                mov.w                 #RXBuffer,&RXBufInPnt
+                mov.w                 #RXBuffer,&RXBufOutPnt
+                ;инициализация переменных
+                clr.w                 &RXCount                        ;сброс счетчика приема
+                clr.w                 &RXError                        ;сброс признака ошибки
+                clr.w                 &BOFPrizn                       ;сброс признака BOF в пакете
+                clr.w                 &TogleStatus                    ;сброс тогле
+                clr.w                 &TX_Empty                       ;сброс признака опустошения буфера передачи
+                clr.w                 &BTMode                         ;сбрасываем режим
+                mov.w                 #1,&TXByteCount                 ;счетчик байт
+                ;инициализация UCA0
+                mov.b                 #0,&UCA0CTL0                    ;режим
+                mov.b                 #UCSSEL_3+UCSWRST,&UCA0CTL1     ;SMCLK + reset
+                mov.w                 #106,&UCA0BRW                   ;115200 от 12.288МГц (0.62%)
+                mov.b                 #UCBRS_7,&UCA0MCTL              ;модуляция 0.7 (-0.03%)
+                mov.b                 #0,&UCA0STAT                    ;режим
+                bis.b                 #00110000b,&P3SEL               ;RX и TX как переферия
+                bis.b                 #0x09,&P2IES                    ;настраиваем прерывание BT_LS и BT_DSM
+                bic.b                 #0x1A,&P2IFG
+                bis.b                 #0x1A,&P2IE
+                bis.b                 #0x10,&P1IES                    ;настраиваем прерывание RTS
+                bic.b                 #0x30,&P1IFG
+                bis.b                 #0x30,&P1IE
+                bic.b                 #UCSWRST,&UCA0CTL1              ;включаем порт
+                bis.b                 #UCRXIE+UCTXIE,&UCA0IE          ;разрешаем прерывание RX и TX
+                _BT_RESET_
+                _BT_WAKEUP_ON_
+                _SET_MODE_            BTOn                            ;ставим признак работы BT
+                mov.w                 #ATModeInitReset,&ATMode        ;ставим режим
+                mov.w                 #60,&BTTimeOut                 ;ставим таймаут включения 6c 
+                mov.w                 #0x3030,&BTMAC                  ;начальный MAC 000000000000
+                mov.w                 #0x3030,&BTMAC+2
+                mov.w                 #0x3030,&BTMAC+4
+                mov.w                 #0x3030,&BTMAC+6
+                mov.w                 #0x3030,&BTMAC+8
+                mov.w                 #0x3030,&BTMAC+10
+                ret
+;________________________________________________________________________________________________________________
+BT_LS_Rutine    ;обработка изменения состояния LS
+                _CLEAR_EVENT_         BT_LS_Event                     ;сброс события
+                mov.w                 #TXBuffer,&TXBufInPnt           ;начальное значение указателей
+                mov.w                 #TXBuffer,&TXBufOutPnt
+                mov.w                 #RXBuffer,&RXBufInPnt
+                mov.w                 #RXBuffer,&RXBufOutPnt
+                clr.w                 &RXCount                        ;сброс счетчика приема
+                clr.w                 &RXError                        ;сброс признака ошибки
+                clr.w                 &BOFPrizn                       ;сброс признака BOF в пакете
+                clr.w                 &TogleStatus                    ;сброс тогле
+                clr.w                 &BTMode                         ;сбрасываем режим BT
+                bit.b                 #0x10,&P2IN                     ;проверяем наличие коннекта
+                jnz                   LS_Connect
+                ;обрабатываем дисконнект
+                call                  #ADCOff                         ;выключаем питание
+                _RESET_MODE_          BTConnect                       ;сбрасываем признак соединения и индикации
+                call                  #GeneratorOff                   ;выключаем генератор если можно
+                ret
+LS_Connect      ;обрабатываем коннект
+                mov.w                 #TXBuffer,&TXBufInPnt           ;начальное значение указателей
+                mov.w                 #TXBuffer,&TXBufOutPnt
+                mov.w                 #RXBuffer,&RXBufInPnt
+                mov.w                 #RXBuffer,&RXBufOutPnt
+                _SET_MODE_            BTConnect                       ;ставим признак соединения
+                call                  #GeneratorOn                    ;включаем генератор
+                _CALL_3DATA_          SendBTPacket,#SENDDEVREADY,#0,#0            ;передаем готовность
+                _CALL_3DATA_          SendBTPacket,#SENDDEVTYPE,#4,#DeviceTypeVer ;передаем тип и версию 
+                ret
+;________________________________________________________________________________________________________________
+/*InitTX          ;инициализация передачи данных
+                tst.w                 &TX_Empty
+                jnz                   NeedInitTX
+                ret
+NeedInitTX      cmp.w                 &TXBufInPnt,&TXBufOutPnt        ;проверяем наличие данных
+                jeq                   NoNeedInit
+                _BT_WAKEUP_ON_
+                _TEST_DSM_                                            ;проверка Deep Sleep Mode
+                jz                    NoNeedInit
+                _TEST_RTS_                                            ;проверка RTS
+                jnz                   NoNeedInit
+                mov.w                 &TXBufOutPnt,REG1
+                mov.b                 @REG1+,REG2                     ;читаем данные
+                cmp.w                 #TXBuffer+TXBufSize,REG1        ;проверка на выход за границу буфера
+                jlo                   NoInitTXBufBrd
+                mov.w                 #TXBuffer,REG1
+NoInitTXBufBrd  mov.w                 REG1,&TXBufOutPnt
+                clr.w                 &TX_Empty
+                mov.b                 REG2,&UCA0TXBUF
+NoNeedInit      ret*/
+;________________________________________________________________________________________________________________
+InitTX          ;инициализация передачи данных с формированием пакетов заданной длительности
+                tst.w                 &TX_Empty
+                jnz                   NeedInitTX
+                ret
+NeedInitTX      cmp.w                 &TXBufInPnt,&TXBufOutPnt        ;проверяем наличие данных
+                jeq                   NoNeedInit
+                tst.w                 &BTMode
+                jz                    Mode0Init
+                ;инициализация при передаче данных            
+                cmp.w                 &TXBufOutPnt,&TXBufInPnt        ;определяем количество байт в буфере  
+                jlo                   IsTxBrd
+                mov.w                 &TXBufInPnt,REG1
+                sub.w                 &TXBufOutPnt,REG1
+                jmp                   EndTxBrd
+IsTxBrd         mov.w                 &TXBufInPnt,REG1
+                add.w                 #TXBufSize,REG1
+                sub.w                 &TXBufOutPnt,REG1
+EndTxBrd        cmp.w                 #MaxPacSize,REG1
+                jlo                   NoNeedInitMode
+                _BT_WAKEUP_ON_
+                _TEST_DSM_                                            ;проверка Deep Sleep Mode
+                jz                    NoNeedInit
+                _TEST_RTS_                                            ;проверка RTS
+                jnz                   NoNeedInit
+                mov.w                 #MaxPacSize,&TXByteCount        ;счетчик байт
+                jmp                   SendFirstByte
+Mode0Init       ;инициализация в режиме 0
+                _BT_WAKEUP_ON_
+                _TEST_DSM_                                            ;проверка Deep Sleep Mode
+                jz                    NoNeedInit
+                _TEST_RTS_                                            ;проверка RTS
+                jnz                   NoNeedInit
+                mov.w                 #1,&TXByteCount                 ;счетчик байт
+SendFirstByte   mov.w                 &TXBufOutPnt,REG1
+                mov.b                 @REG1+,REG2                     ;читаем данные
+                cmp.w                 #TXBuffer+TXBufSize,REG1        ;проверка на выход за границу буфера
+                jlo                   NoInitTXBufBrd
+                mov.w                 #TXBuffer,REG1
+NoInitTXBufBrd  mov.w                 REG1,&TXBufOutPnt
+                clr.w                 &TX_Empty
+                dec.w                 &TXByteCount
+                mov.b                 REG2,&UCA0TXBUF
+NoNeedInit      ret
+NoNeedInitMode  _BT_WAKEUP_OFF_
+                ret
+;________________________________________________________________________________________________________________
+USCI_A0_Rutine  ;обработка прерывания COM порта
+                add.w                 &UCA0IV,PC                      ;определем прерывание
+                reti                                                  ;no interrupt
+                jmp                   USCI_A0_RX_ISR                  ;RXIFG
+                jmp                   USCI_A0_TX_ISR                  ;TXIFG
+;________________________________________________________________________________________________________________
+USCI_A0_RX_ISR  ;прерывание на прием данных от BT
+                bic.w                 #LPM3,0(SP)                     ;просыпаемся
+                _SET_EVENT_           BT_RX_Event                     ;ставим событие
+                push.w                REG1
+                mov.w                 &RXBufInPnt,REG1                ;адрес в буфере
+                mov.b                 &UCA0RXBUF,0(REG1)              ;читаем данные
+                inc.w                 REG1                            ;инкремент указателя
+                cmp.w                 #RXBuffer+RXBufSize,REG1        ;проверка на выход за границу буфера
+                jlo                   NoRXIntBufBoard
+                mov.w                 #RXBuffer,REG1
+NoRXIntBufBoard mov.w                 REG1,&RXBufInPnt                ;сохраняем указатель
+                pop.w                 REG1
+                reti
+;________________________________________________________________________________________________________________
+/*USCI_A0_TX_ISR  ;перрывание на передачу данных по BT
+                _TEST_DSM_                                            ;проверка Deep Sleep Mode
+                jz                    NoTXBTByBusy
+                _TEST_RTS_                                            ;проверка RTS
+                jnz                   NoTXBTByBusy
+                cmp.w                 &TXBufInPnt,&TXBufOutPnt        ;проверяем наличие данных
+                jne                   IsDataTX
+                _BT_WAKEUP_OFF_
+NoTXBTByBusy    mov.w                 #1,&TX_Empty                    ;ставим признак опустошения буфера
+                reti
+IsDataTX        push.w                REG1 
+                mov.w                 &TXBufOutPnt,REG1
+                mov.b                 @REG1+,&UCA0TXBUF
+                cmp.w                 #TXBuffer+TXBufSize,REG1        ;проверка на выход за границу буфера
+                jlo                   NoTXBufBrd
+                mov.w                 #TXBuffer,REG1
+NoTXBufBrd      mov.w                 REG1,&TXBufOutPnt   
+                pop.w                 REG1
+                reti*/
+;________________________________________________________________________________________________________________
+USCI_A0_TX_ISR  ;перрывание на передачу данных по BT с формированием пакетов заданной длительности
+                _TEST_DSM_                                            ;проверка Deep Sleep Mode
+                jz                    NoTXBTByBusy
+                _TEST_RTS_                                            ;проверка RTS
+                jnz                   NoTXBTByBusy
+                cmp.w                 &TXBufInPnt,&TXBufOutPnt        ;проверяем наличие данных
+                jne                   IsDataTX
+                _BT_WAKEUP_OFF_
+NoTXBTByBusy    mov.w                 #1,&TX_Empty                    ;ставим признак опустошения буфера
+                reti
+IsDataTX        tst.w                 &BTMode
+                jz                    TXIntSendByte
+                tst.w                 &TXByteCount
+                jz                    NoTXBTByBusy
+                dec.w                 &TXByteCount
+TXIntSendByte   push.w                REG1 
+                mov.w                 &TXBufOutPnt,REG1
+                mov.b                 @REG1+,&UCA0TXBUF
+                cmp.w                 #TXBuffer+TXBufSize,REG1        ;проверка на выход за границу буфера
+                jlo                   NoTXBufBrd
+                mov.w                 #TXBuffer,REG1
+NoTXBufBrd      mov.w                 REG1,&TXBufOutPnt   
+                pop.w                 REG1
+                reti
+                
+;________________________________________________________________________________________________________________
+BT_RX_Rutine    ;обработка принятых данных
+                dint
+                cmp.w                 &RXBufOutPnt,&RXBufInPnt        ;проверем наличие данных
+                jne                   IsRXData
+                _CLEAR_EVENT_         BT_RX_Event                     ;сброс события
+                eint
+                ret
+IsRXData        eint  
+                ;проверка обработка принтых данных
+                mov.w                 &RXBufOutPnt,REG1               ;адрес обработанных данных
+                mov.b                 @REG1+,REG2                     ;заносим символ из буфера
+                cmp.w                 #RXBuffer+RXBufSize,REG1        ;проверем на выход указател за границы буфера
+                jlo                   NoRXBufBoard
+                mov.w                 #RXBuffer,REG1
+NoRXBufBoard    mov.w                 REG1,&RXBufOutPnt               ;сохранем указатель
+                _TEST_MODE_           BTConnect
+                jz                    IsATModeRX
+                ;проверем на BOF
+                cmp.b                 #BOF,REG2                       
+                jne                   NoBOF
+                ;обрабатываем BOF
+                clr.w                 &RXCount                        ;сброс счетчика приема
+                clr.w                 &RXError                        ;сброс признака ошибки
+                mov.w                 #1,&BOFPrizn                    ;признак BOF в пакете
+                clr.w                 &TogleStatus                    ;сброс тогле
+                clr.w                 &RXCount                        ;сброс счетчика приема
+                ret
+                ;проверем на EOF
+NoBOF           cmp.b                 #EOF,REG2                       
+                jne                   NoEOF
+                ;обрабатываем EOF
+                cmp.w                 #1,&BOFPrizn                    ;проверем что был BOF
+                jne                   PaketError
+                cmp.w                 #0,&RXError                     ;проверем что не было ошибки
+                jne                   PaketError
+                call                  #ValidRXPacket                  ;обрабатываем принтый пакет
+                clr.w                 &BOFPrizn                       ;сброс признака BOF в пакете
+                clr.w                 &TogleStatus                    ;сброс тогле
+                clr.w                 &RXError                        ;сброс признака ошибки
+                ret
+PaketError      call                  #SendErrorPacket                
+                ret
+NoEOF           ;обрабатываем байт данных
+                cmp.w                 #0,&BOFPrizn                    ;если не было BOF - выходим
+                jne                   IsBOFValid
+                ret
+IsBOFValid      cmp.w                 #0,&RXError                     ;если была ошибка - выходим
+                jeq                   IsNoError
+                ret
+IsNoError       cmp.b                 #TOGLE,REG2                     ;проверем на тогле
+                jne                   NoTOGLE
+                mov.w                 #1,&TogleStatus                 ;ставим признак TOGLE
+                ret
+NoTOGLE         cmp.w                 #0,&TogleStatus                 ;проверем что предыдущий не был TOGLE
+                jeq                   NoNeedTogle
+                xor.b                 #TOGLEBYTE,REG2                 ;делаем TOGLE
+                clr.w                 &TogleStatus                    ;сбрасываем TOGLE
+NoNeedTogle     mov.w                 #PacketBuffer,REG3              ;указатель на буфер команды
+                mov.w                 &RXCount,REG4                   ;количество принтых байт
+                add.w                 REG4,REG3                       ;указатель на данные в буфере
+                mov.b                 REG2,0(REG3)                    ;соранем символ в буфере
+                inc.w                 REG4                            ;увеличиваем количество принтых байт
+                mov.w                 REG4,&RXCount                   ;сохранем количество принтых байт
+                cmp.w                 #MaxCommandSize,REG4            ;проверем что превысили размер пакета
+                jhs                   MaxPackEroor
+                ret
+MaxPackEroor    ;обрабатываем ошибку превышени размера пакета
+                mov.w                 #1,&RXError                     ;ставим признак ошибки
+                ret
+;________________________________________________________________________________________________________________
+IsATModeRX      cmp.w                 #_LF_,REG2
+                jne                   NoATCmdLF
+                tst.w                 &RXError
+                jnz                   ATCmdError
+                call                  #ValidATCmd
+ATCmdError      clr.w                 &RXCount                        ;сброс счетчика приема
+                clr.w                 &RXError                        ;сброс признака ошибки
+                clr.w                 &RXCount                        ;сброс счетчика приема
+                ret
+NoATCmdLF       mov.w                 #PacketBuffer,REG3              ;указатель на буфер команды
+                mov.w                 &RXCount,REG4                   ;количество принтых байт
+                add.w                 REG4,REG3                       ;указатель на данные в буфере
+                mov.b                 REG2,0(REG3)                    ;сохранем символ в буфере
+                inc.w                 REG4                            ;увеличиваем количество принтых байт
+                mov.w                 REG4,&RXCount                   ;сохранем количество принтых байт
+                cmp.w                 #MaxCommandSize,REG4            ;проверем что превысили размер пакета
+                jhs                   MaxATError
+                ret
+MaxATError      ;обрабатываем ошибку превышени размера пакета
+                mov.w                 #1,&RXError                     ;ставим признак ошибки
+                ret  
+;________________________________________________________________________________________________________________
+ValidRXPacket   ;обработка принятого пакета
+                call                  #TestCRC
+                tst.w                 REG1
+                jnz                   IsValidCRC
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsValidCRC      mov.w                 #PacketBuffer,REG1              ;указатель на пакет
+                cmp.b                 #SENDDEVREADY,0(REG1)           ;проверяем что запрос READY
+                jeq                   ReadyPacket
+                cmp.b                 #SENDDEVTYPE,0(REG1)            ;проверяем что запрос DevType
+                jeq                   TypePacket
+                cmp.b                 #SETMODE0,0(REG1)               ;проверем что пакет режим 0
+                jeq                   SetMode0Packet
+                cmp.b                 #SETMODE1,0(REG1)               ;проверем что пакет режим 1
+                jeq                   SetMode1Packet
+                cmp.b                 #SETMODE2,0(REG1)               ;проверем что пакет режим 2
+                jeq                   SetMode2Packet
+                cmp.b                 #SETMODE3,0(REG1)               ;проверем что пакет режим 3
+                jeq                   SetMode3Packet
+                cmp.b                 #SENDBTMAC,0(REG1)              ;проверем что пакет запроса MAC
+                jeq                   SendMAC
+                cmp.b                 #SENDDEVDATA,0(REG1)            ;проверем что пакет запроса служебных данных
+                jeq                   SendDevData
+                cmp.b                 #SETDEVDATA,0(REG1)             ;проверем что пакет записи служебных данных
+                jeq                   SetDevData
+                cmp.b                 #GETBATTERY,0(REG1)             ;проверем что пакет заряда батареи
+                jeq                   SendBattery
+                call                  #SendNotSupportMode
+                ret
+;________________________________________________________________________________________________________________
+ReadyPacket     ;обработка запроса пакета готовности
+                _CALL_3DATA_          SendBTPacket,#SENDDEVREADY,#0,#0;передаем готовность
+                ret
+;________________________________________________________________________________________________________________
+TypePacket      ;обработка запроса - тип прибора
+                _CALL_3DATA_          SendBTPacket,#SENDDEVTYPE,#4,#DeviceTypeVer;передаем тип и версию 
+                ret
+;________________________________________________________________________________________________________________
+SetMode0Packet  ;устанавливаем режим 0
+                cmp.w                 #3,&RXCount                     ;проверем длину пакета
+                jeq                   IsSetMode0
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsSetMode0      clr.w                 &BTMode                         ;режим 0
+                _CALL_3DATA_          SendBTPacket,#SETMODE0,#0,#0    ;передаем режим 0
+                call                  #ADCOff                         ;выключаем питание
+                ret
+;________________________________________________________________________________________________________________
+SetMode1Packet  ;устанавливам режим 1
+                cmp.w                 #3,&RXCount                     ;проверем длину пакета
+                jeq                   IsSetMode1
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsSetMode1      mov.w                 #1,&BTMode                      ;режим 1
+                mov.w                 #SETMODE1,&BTModeTX             ;признак пакета при передаче
+                clr.w                 &BTSampleCount                  ;сброс счетчика переданных отсетов
+                clr.w                 &BTADCCount                     ;сброс счетчика прореживания BT
+                mov.w                 #Mode1Count,&BTADCCountEnd      ;прореживание
+                mov.w                 &Mode1FilterSize,&BTFilerSize   ;размер фильтра
+                mov.w                 #Mode1Filter,&BTFiler           ;указатель на коэффициенты фильтра
+                call                  #ADCOn                          ;включаем питание
+                ret
+;________________________________________________________________________________________________________________
+SetMode2Packet  ;устанавливам режим 2
+                cmp.w                 #3,&RXCount                     ;проверем длину пакета
+                jeq                   IsSetMode2
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsSetMode2      mov.w                 #2,&BTMode                      ;режим 2
+                mov.w                 #SETMODE2,&BTModeTX             ;признак пакета при передаче
+                clr.w                 &BTSampleCount                  ;сброс счетчика переданных отсетов
+                clr.w                 &BTADCCount                     ;сброс счетчика прореживания BT
+                mov.w                 #Mode2Count,&BTADCCountEnd      ;прореживание
+                mov.w                 &Mode2FilterSize,&BTFilerSize   ;размер фильтра
+                mov.w                 #Mode2Filter,&BTFiler           ;указатель на коэффициенты фильтра
+                call                  #ADCOn                          ;включаем питание
+                ret
+;________________________________________________________________________________________________________________
+SetMode3Packet  ;устанавливам режим 3
+                cmp.w                 #3,&RXCount                     ;проверем длину пакета
+                jeq                   IsSetMode3
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsSetMode3      mov.w                 #3,&BTMode                      ;режим 3
+                mov.w                 #SETMODE3,&BTModeTX             ;признак пакета при передаче
+                clr.w                 &BTSampleCount                  ;сброс счетчика переданных отсетов
+                clr.w                 &BTADCCount                     ;сброс счетчика прореживания BT
+                mov.w                 #Mode3Count,&BTADCCountEnd      ;прореживание
+                mov.w                 &Mode3FilterSize,&BTFilerSize   ;размер фильтра
+                mov.w                 #Mode3Filter,&BTFiler           ;указатель на коэффициенты фильтра
+                call                  #ADCOn                          ;включаем питание
+                ret
+;________________________________________________________________________________________________________________
+SendMAC         ;запрос MAC
+                cmp.w                 #3,&RXCount                     ;проверем длину пакета
+                jeq                   IsSendMAC
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsSendMAC       _CALL_3DATA_          SendBTPacket,#SENDBTMAC,#BTMACSize,#BTMAC;передаем MAC
+                ret
+;________________________________________________________________________________________________________________
+SendDevData     ;запрос служебных данных
+                cmp.w                 #3,&RXCount                     ;проверем длину пакета
+                jeq                   IsSendDevData
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsSendDevData   _CALL_3DATA_          SendBTPacket,#SENDDEVDATA,#DevDataSize,#DeviceInfo;передаем служебные данные
+                ret
+;________________________________________________________________________________________________________________
+SetDevData      ;запись служебных данных
+                cmp.w                 #3+DevDataSize,&RXCount         ;проверем длину пакета
+                jeq                   IsSetDevData
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsSetDevData    mov.w                 #DeviceInfo,REG2                ;проверяем что служебные данные стерты
+                mov.w                 #DevDataSize,REG3
+TestDevData     cmp.b                 #0xFF,0(REG2)
+                jne                   NoWriteDevData
+                inc.w                 REG2
+                dec.w                 REG3
+                jnz                   TestDevData
+                inc.w                 REG1                            ;указатель на данные
+                mov.w                 #DeviceInfo,REG2                ;куда
+                mov.w                 #DevDataSize,REG3               ;и сколько писать
+                call                  #WriteInfoMemoryBlock           ;пишем
+NoWriteDevData  _CALL_3DATA_          SendBTPacket,#SENDDEVDATA,#DevDataSize,#DeviceInfo;передаем служебные данные
+                ret
+;________________________________________________________________________________________________________________
+SendBattery     ;запрос заряда батареии
+                cmp.w                 #3,&RXCount                     ;проверем длину пакета
+                jeq                   IsSendBattery
+                call                  #SendErrorPacket                ;передаем ошибку
+                ret
+IsSendBattery   _CALL_3DATA_          SendBTPacket,#GETBATTERY,#4,#Battery;передаем заряд батареи
+                ret
+;________________________________________________________________________________________________________________
+TestCRC         ;тест контрольной суммы     REG1=1 - OK  
+                mov.w                 #PacketBuffer,REG1              ;указатель на пакет
+                mov.w                 &RXCount,REG2                   ;длина пакета
+                cmp.w                 #3,REG2                         ;если длина меньше 3 - ошибка
+                jlo                   TestCRCError
+                decd.w                REG2                            ;уменьшаем размер пакета на 2
+                _INIT_CRC_
+MakeCRC         mov.b                 @REG1+,REG3
+                _ADD_CRC_             REG3
+                dec.w                 REG2
+                jnz                   MakeCRC
+                mov.b                 @REG1+,REG3                     ;LSB CRC
+                mov.b                 @REG1+,REG4                     ;MSB CRC
+                _MOV_CRC_             REG5
+                cmp.b                 REG3,REG5                       ;сравнение LB CRC
+                jne                   TestCRCError
+                swpb                  REG5
+                cmp.b                 REG4,REG5                       ;сравнение HB CRC
+                jne                   TestCRCError
+                mov.w                 #1,REG1
+                ret
+TestCRCError    clr.w                 REG1
+                ret
+;________________________________________________________________________________________________________________
+SendErrorPacket ;передача - ошибочный пакет
+                _CALL_3DATA_          SendBTPacket,#SENDERRORPACKET,#0,#0
+                ret
+;________________________________________________________________________________________________________________
+SendNotSupportMode ;передача, что принят не поддерживаемый пакет
+                _CALL_3DATA_          SendBTPacket,#SENDERRORMODE,#0,#0
+                ret
+;################################################################################################################
+                RSEG                  DATA16_C                        ;сегмент констант
+;________________________________________________________________________________________________________________
+BTMACAddress    DB                    'AT-AB BDAddress ',_BTD_,_BTD_,_BTD_,_BTD_,_BTD_,_BTD_,_BTD_,_BTD_,_BTD_,_BTD_,_BTD_,_BTD_,_CR_,_LF_
+BTConfigOK      DB                    'AT-AB ConfigOk',_CR_,_LF_
+SetBaudRate     DB                    'AT+AB ChangeBaud 460800',_CR_,_LF_
+BTChangeBaud    DB                    'AT-AB Baudrate Changed',_CR_,_LF_
+//SetBaudRate     DB                    'AT+AB cptest',_CR_,_LF_
+;________________________________________________________________________________________________________________
+;программирование настроек
+DeviceConfig00  DB                    'AT+AB CONFIG DeviceName=HeartIn',_CR_,_LF_
+DeviceConfig01  DB                    'AT+AB CONFIG GPIO_HostWakeup=2',_CR_,_LF_ //!!!!!!!
+DeviceConfig02  DB                    'AT+AB CONFIG GPIO_HostKeepAwake=2',_CR_,_LF_ //!!!!!!!
+DeviceConfig03  DB                    'AT+AB CONFIG HostShallowSleepEnable=true',_CR_,_LF_ 
+DeviceConfig04  DB                    'AT+AB CONFIG HostDeepSleepEnable=true',_CR_,_LF_ 
+DeviceConfig05  DB                    'AT+AB CONFIG CpuMHz=32',_CR_,_LF_
+DeviceConfig06  DB                    'AT+AB CONFIG COD=240404',_CR_,_LF_ //!!!!!!!240404
+DeviceConfig07  DB                    'AT+AB CONFIG UseExtLPO=true',_CR_,_LF_
+DeviceConfig08  DB                    'AT+AB CONFIG DefaultSecurity=4',_CR_,_LF_
+DeviceConfig09  DB                    'AT+AB CONFIG DefaultAuthentication=4',_CR_,_LF_
+DeviceConfig10  DB                    'AT+AB CONFIG AutoSniff=false',_CR_,_LF_ //!!!!!!!
+DeviceConfig11  DB                    'AT+AB CONFIG AutoSniffInterval=100',_CR_,_LF_
+DeviceConfig12  DB                    'AT+AB CONFIG AutoSniffTimeOut=5',_CR_,_LF_
+DeviceConfig13  DB                    'AT+AB CONFIG EnablePowerControl=true',_CR_,_LF_
+DeviceConfig14  DB                    'AT+AB CONFIG StreamingSerial=false',_CR_,_LF_
+DeviceConfig15  DB                    'AT+AB CONFIG EnableIAP=true',_CR_,_LF_ //!!!!!!
+DeviceConfig16  DB                    'AT+AB CONFIG iAPAppID=net.heartin.HeartInClientiOS',_CR_,_LF_
+DeviceConfig17  DB                    'AT+AB CONFIG iAPProtocolStrMain=com.nvc.bt.iap',_CR_,_LF_
+DeviceConfig18  DB                    'AT+AB CONFIG iAPProtocolStrAlt=com.****.ProtocolAlt',_CR_,_LF_
+DeviceConfig19  DB                    'AT+AB CONFIG CPI2CMode=2',_CR_,_LF_
+DeviceConfig20  DB                    'AT+AB CONFIG AccName=HearIn',_CR_,_LF_
+DeviceConfig21  DB                    'AT+AB CONFIG AccManufacturer=HearIn',_CR_,_LF_
+DeviceConfig22  DB                    'AT+AB CONFIG AccModelNumber=ECG amplifier',_CR_,_LF_
+DeviceConfig23  DB                    'AT+AB CONFIG AccSerialNumber=Ver.1.00',_CR_,_LF_
+;################################################################################################################
+                COMMON                INTVEC                          ;сегмент векторов прерываний
+;________________________________________________________________________________________________________________
+                ORG                   USCI_A0_VECTOR                  ;0xFFF2 USCI A0 Receive/Transmit
+                DW                    USCI_A0_Rutine
+;################################################################################################################
+                END
