@@ -35,25 +35,27 @@ EXPORT          Mode2Filter
 EXPORT          Mode3FilterSize
 EXPORT          Mode3Filter
 EXPORT          FilterBuffer
+
+;export 		SPI_Flash_Write
 ;################################################################################################################
-                RSEG                  DATA16_N                        ;сегмент данных
+                RSEG                  DATA16_N                        ;data segment
 ;________________________________________________________________________________________________________________
-ADCBufInPnt     DS                    2                               ;указатель на буфер АЦП
-ADCBufOutPnt    DS                    2                               ;указатель на буфер АЦП
-ADCBuffer       DS                    ADCBuffSize                     ;буфер АЦП
+ADCBufInPnt     DS                    2                               ;pointer to ADC buffer
+ADCBufOutPnt    DS                    2                               ;pointer to ADC buffer
+ADCBuffer       DS                    ADCBuffSize                     ;ADC buffer
 ADCTxData       DS                    2                               ;переменная для передачи в АЦП при считывании
-FilterBufPnt    DS                    2                               ;указатель на буфер фильтра
-FilterBufPntOld DS                    2                               ;указатель на буфер фильтра
-FilterBuffer    DS                    FilterBuffSize                  ;буфер фильтра
+FilterBufPnt    DS                    2                               ;pointer to filter's fuffer
+FilterBufPntOld DS                    2                               ;pointer to filter's fuffer
+FilterBuffer    DS                    FilterBuffSize                  ;filtesr's buffer
 OutBuffer       DS                    8*3+2                           ;буфер выходного отсчета фильтра
 ;################################################################################################################
-                RSEG                  CODE                            ;сегмент кода программы
+                RSEG                  CODE                            ;Code segment
 ;________________________________________________________________________________________________________________
 ADC_Data_Rutine ;обработка данных от АЦП
                 dint
-                cmp.w                 &ADCBufInPnt,&ADCBufOutPnt      ;проверяем наличие данных
+                cmp.w                 &ADCBufInPnt,&ADCBufOutPnt      ;Check data availability
                 jne                   Is_ADC_Data
-                _CLEAR_EVENT_         ADC_Data_Event                  ;сбрасываем событие
+                _CLEAR_EVENT_         ADC_Data_Event                  ;resret event
                 eint
                 ret
 Is_ADC_Data     eint
@@ -133,7 +135,7 @@ Is_ADC_Data     eint
                 mov.b                 @REG1+,REG4                     ;младший байт
                 swpb                  REG4                            ;LSW
                 mov.w                 REG4,12(REG2)                   ;LSW
-                ;увеличиваем указатель на данные АЦП
+                ;increment pointer to ADC data
                 mov.w                 &ADCBufOutPnt,REG1
                 add.w                 #ADCSampleSize,REG1
                 cmp.w                 #ADCBuffer+ADCBuffSize,REG1
@@ -189,33 +191,33 @@ NoBTData        ;обрабатываем данные по USB
                 inc.w                 &USBSampleCount                 ;увеличиваем счетчик отсчетов 
 NoUSBData       ret
 ;________________________________________________________________________________________________________________
-InitADC         ;начальная инициализация АЦП
+InitADC         ;ADC init
                 ;настраиваем UCB0 для приема данных от АЦП
                 mov.b                 #UCMSB+UCMST+UCMODE_0+UCSYNC,&UCB0CTL0 ;polarity, MSB first, master mode, 3-pin SPI, Synchronous mode
                 mov.b                 #UCSSEL_3+UCSWRST,&UCB0CTL1     ;SMCLK + reset
                 mov.b                 #2,&UCB0BR0                     ;делитель 2 от SMCLK
                 mov.b                 #0,&UCB0BR1
-                bic.b                 #UCSWRST,&UCB0CTL1              ;убираем reset
-                bis.b                 #0x0E,&P3SEL                    ;SDI, SO и SCLK как переферия
+                bic.b                 #UCSWRST,&UCB0CTL1              ;remove reset
+                bis.b                 #0x0E,&P3SEL                    ;SDI, SO и SCLK alternate function on PORT3
                 bis.b                 #0x01,&P3OUT                    ;CS = 1
                 ;настраиваем DMA0 для чтения данных АЦП
                 bis.w                 #DMA0TSEL_18,&DMACTL0           ;DMA0 USCIB0RXIFG
                 mov.w                 #DMADT_0+DMADSTINCR_3+DMASRCINCR_0+DMADSTBYTE+DMASRCBYTE+DMALEVEL+DMAIE,&DMA0CTL  ;single transfer, destination address incremented, source address unchanged, byte to byte, interrupt enable
-                mov.w                 #ADCSampleSize,&DMA0SZ          ;размер блока
+                mov.w                 #ADCSampleSize,&DMA0SZ          ;Block size
                 mov.w                 #UCB0RXBUF,&DMA0SAL             ;UCB1RXBUF
                 ;настраиваем DMA1 для передачи данных флеш
                 clr.w                 &ADCTxData                      ;состояние пременной, которую передаем
                 bis.w                 #DMA1TSEL_19,&DMACTL0           ;DMA1 UCB0TXIFG
                 mov.w                 #DMADT_0+DMADSTINCR_0+DMASRCINCR_0+DMADSTBYTE+DMASRCBYTE+DMALEVEL,&DMA1CTL  ;single transfer, destination address unchanged,, source address unchanged, byte to byte
-                mov.w                 #ADCSampleSize,&DMA1SZ          ;размер блока
+                mov.w                 #ADCSampleSize,&DMA1SZ          ;Block size
                 mov.w                 #ADCTxData,&DMA1SAL             ;передаем ADCTxData=0
-                mov.w                 #UCB0TXBUF,&DMA1DAL             ;адрес куда записывать
+                mov.w                 #UCB0TXBUF,&DMA1DAL             ;Destination adress
                 ;настраиваем TB0 для тактирования АЦП
                 mov.w                 #TBCLGRP_0+CNTL__16+TBSSEL_2+ID_0+MC_0+TBCLR,&TB0CTL ;loads independently, 16 bit, SMCLK, /1, stop, сброс
                 mov.w                 #6-1,&TB0CCR0                   ;CLK 2.048MHz от 12.288MHz
                 ;настраиваем TB0.2
-                mov.w                 #3,&TB0CCR2                     ;скважность SCLK
-                mov.w                 #OUTMOD_3,&TB0CCTL2             ;режим SET/RESET
+                mov.w                 #3,&TB0CCR2                     ;SCLK duty cycle
+                mov.w                 #OUTMOD_3,&TB0CCTL2             ;SET/RESET mode
                 ret
 ;________________________________________________________________________________________________________________
 ADCOn           ;включение АЦП
@@ -286,6 +288,9 @@ NeedAnalogOff   ;выключаем
                 mov.w                 #ADCBuffer,&ADCBufOutPnt
                 ret
 ;________________________________________________________________________________________________________________
+;##############################################################################
+;###### ADC command send function    ##########################################
+;##############################################################################
 SendADCCommand  ;передача комманды в АЦП
 ;REG1 - указатель на комманду
                 _CS_PAUSE_
@@ -302,7 +307,7 @@ WaitSendByte    bit.b                 #UCRXIFG,&UCB0IFG
                 bis.b                 #0x01,&P3OUT                    ;CS = 1
                 ret
 ;________________________________________________________________________________________________________________
-DMA_Rutine      ;обработка прерываний DMA
+DMA_Rutine      ;DMA Interrupts 
                 add                   &DMAIV,PC
                 reti                                                  ;no int
                 jmp                   End_ADC_Data                    ;DMA channel 0 End ADC Data Read
@@ -327,6 +332,79 @@ NoADCIntBufBrd  mov.w                 REG1,&ADCBufInPnt               ;сохраняем
                 bis.b                 #0x01,&P3OUT                    ;CS = 0
                 pop.w                 REG1
                 reti
+;###############################################################################
+
+
+;###############################################################################
+;################   SPI FLASH Handling routine  ################################
+;###############################################################################
+
+SPIF_Mutex    DS	1	;Flag of using SPI Flash (Used, when == 1)
+SPIF_Buf      DS	256	;256 bytes buffer for SPI Flash page programming
+SPIF_Command  DS	1	;Command
+SPIF_Page_Num DS	2	;Page Number
+SPIF_Byte_Num DS	1	;Number of byte is written
+SPIF_Sector   DS	3	;Adress of SPI Flash Sector
+
+
+;-------------------------------------------------------------------------------
+;-------------------------------------------------------------------------------
+SPI_Flash_4KB_Earse:
+		mov.b		#00000001b, tmp
+		mov.b		tmp, SPIF_Mutex    	;Chooze memory
+		
+		bis.b		#00001000b, &P6OUT	;SPI Flash select
+		
+		clr		tmp
+		mov.b           &UCB0RXBUF, tmp      	;Reset SPI Rx Flag
+		bic.b		#0x01, &P3OUT		;CS = 0
+						
+		mov.b		#0x06, tmp		;Send Write Enable
+		mov.b		tmp, &UCB0TXBUF		
+SPI_Sending:	bit.b           #UCRXIFG,&UCB0IFG
+		jz		SPI_Sending
+		bis.b		#0x01, &P3OUT		;CS = 1
+		_CS_PAUSE_
+;-------------------------------------------------------------------------------
+		clr		tmp
+		mov.b           &UCB0RXBUF, tmp      	;Reset SPI Rx Flag
+		
+		bic.b		#0x01, &P3OUT		;CS = 0
+		mov.b		#0x20, tmp		;Earse 4KB Sector com.
+		mov.b		tmp, &UCB0TXBUF
+SPI_Sending1: 	bit.b           #UCRXIFG,&UCB0IFG
+		jz		SPI_Sending1
+		
+		clr		tmp			;Write Sector Adress
+		mov.b 		tmp, SPIF_Sector
+		mov.b 		tmp, SPIF_Sector+1
+		mov.b 		tmp, SPIF_Sector+2
+		
+		clr		tmp			;Reset SPI Rx Flag
+		mov.b           &UCB0RXBUF, tmp
+		mov.b		SPIF_Sector, tmp	;1st Adress Byte
+		mov.b		tmp, &UCB0TXBUF
+SPI_Sending2: 	bit.b           #UCRXIFG,&UCB0IFG
+		jz		SPI_Sending2
+	
+		clr		tmp			;Reset SPI Rx Flag
+		mov.b           &UCB0RXBUF, tmp      	
+		mov.b		SPIF_Sector, tmp	;2nd Adress Byte
+		mov.b		tmp, &UCB0TXBUF
+SPI_Sending3: 	bit.b           #UCRXIFG,&UCB0IFG
+		jz		SPI_Sending3
+		
+		clr		tmp			;Reset SPI Rx Flag
+		mov.b           &UCB0RXBUF, tmp      	
+		mov.b		SPIF_Sector, tmp	;3rd Adress Byte
+		mov.b		tmp, &UCB0TXBUF
+SPI_Sending4: 	bit.b           #UCRXIFG,&UCB0IFG
+		jz		SPI_Sending4
+		
+		bis.b		#0x01, &P3OUT		;CS = 1
+		_CS_PAUSE_
+		ret
+
 ;################################################################################################################
                 RSEG                  DATA16_C                        ;сегмент констант
 ;________________________________________________________________________________________________________________

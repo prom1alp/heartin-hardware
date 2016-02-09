@@ -26,22 +26,24 @@ EXPORT          GeneratorOn
 EXPORT          GeneratorOff
 EXPORT          DeviceTypeVer
 ;################################################################################################################
-                RSEG                  CSTACK                          ;сегмент стека                          
+                RSEG                  CSTACK                          ;Stack Segment
 ;________________________________________________________________________________________________________________
-                DS                    256
+                DS                     256
 ;################################################################################################################
-                RSEG                  DATA16_N                        ;сегмент данных
+                RSEG                  DATA16_N                        ;Data segment
 ;________________________________________________________________________________________________________________
-DeviceTypeVer   DS                    4                               ;тип и версия прибора
-DeviceMode      DS                    2                               ;режим работы                
-DeviceEvent     DS                    2                               ;события
+DeviceTypeVer   DS              4                               ;Device type and version
+DeviceMode      DS              2                               ;Working mode     
+DeviceEvent     DS              2                               ;Events
+
+TestByte	DS		1				;Test byte
 ;################################################################################################################
-                RSEG                  CODE                            ;сегмент кода программы
+                RSEG                  CODE                            ;Code segment
 ;________________________________________________________________________________________________________________
-RESET_RUTINE    add.w                 &SYSRSTIV,PC                    ;определем прерывание
-                jmp                   MAKE_HV_RESET                   ;no interrupt
+RESET_RUTINE    add.w                 &SYSRSTIV,PC                    ;Interrupt detection
+                jmp                   MainProgStart;MAKE_HV_RESET                   ;no interrupt
                 jmp                   MAKE_HV_RESET                   ;brownout (BOR)
-                jmp                   MainProgStart                   ;RST/NMI (POR)
+                jmp                   MainProgStart                   ;RST/NMI (POR)www
                 jmp                   MAKE_HV_RESET                   ;DoBOR (BOR)
                 jmp                   MAKE_HV_RESET                   ;port wakeup (BOR)
                 jmp                   MAKE_HV_RESET                   ;security voliation (BOR)
@@ -63,74 +65,74 @@ MAKE_HV_RESET   mov.w                 #PMMSWPOR+PMMPW+PMMCOREV_3,&PMMCTL0
 ;________________________________________________________________________________________________________________
 MainProgStart   _SETUP_WDT_                                           ;reset WDT
                 bic.w                 #SYSNMI,&SFRRPCR                ;RESET as Reset
-                mov.w                 #SFE(CSTACK),SP                 ;инициализируем указатель стека
-                mov.w                 #0,&DeviceTypeVer               ;тип прибора
-                mov.w                 #0,&DeviceTypeVer+2             ;версия ПО
-                clr.w                 &DeviceMode                     ;сброс режима
-                clr.w                 &DeviceEvent                    ;сбрасываем события
-                eint                                                  ;глобальное разрешение прерываний
+                mov.w                 #SFE(CSTACK),SP                 ;SP Init
+                mov.w                 #0,&DeviceTypeVer               ;Device Type
+                mov.w                 #0,&DeviceTypeVer+2             ;Firmware version
+                clr.w                 &DeviceMode                     ;Mode resetting
+                clr.w                 &DeviceEvent                    ;Reset Events
+                eint                                                  ;Enable interrupts
                 nop
-                call                  #SetupPort                      ;настраиваем порты ввода-вывода
+                call                  #SetupPort                      ;IO Ports Init
                 _SETUP_WDT_
-                call                  #GeneratorInit                  ;настраиваем генератор
+                call                  #GeneratorInit                  ;Osc. Init
                 _SETUP_WDT_
-                call                  #InitWriteInfoMemory            ;инициализируем флеш
+                call                  #InitWriteInfoMemory            ;Flash Init
                 _SETUP_WDT_
-                call                  #InitADC                        ;настраиваем АЦП
+                call                  #InitADC                        ;ADC Init
                 _SETUP_WDT_
-                call                  #InitTimer                      ;инициализируем таймер
+                call                  #InitTimer                      ;Timer Init
                 _SETUP_WDT_
-                call                  #SetupBT                        ;настраиваем BT
+                call                  #SetupBT                        ;BT Init
                 _SETUP_WDT_
-                call                  #SetupUSB                       ;настаиваем USB
+                call                  #SetupUSB                       ;USBs UART Init
 ;________________________________________________________________________________________________________________
-MainLoop        _TEST_EVENT_          TMR_10Hz_Event,TMR_10Hz_Rutine  ;прерывание таймера
-                _TEST_EVENT_          BT_LS_Event,BT_LS_Rutine        ;обработка изменения BT LS
-                _TEST_EVENT_          BT_WU_Event,BT_WU_Rutine        ;обработка изменения BT WU
-                _TEST_EVENT_          BT_RX_Event,BT_RX_Rutine        ;обработка приема данных по BT
-                _TEST_EVENT_          USB_RX_Event,USB_RX_Rutine      ;обработка приема данных по USB
-                _TEST_EVENT_          ADC_Data_Event,ADC_Data_Rutine  ;обработка данных АЦП
-                _TEST_EVENT_          Bat_ADC_Event,Bat_ADC_Rutine    ;обработка данных АЦП
+MainLoop        _TEST_EVENT_          TMR_10Hz_Event,TMR_10Hz_Rutine  ;Timer Interrupt
+                _TEST_EVENT_          BT_LS_Event,BT_LS_Rutine        ;BT LS change handling
+                _TEST_EVENT_          BT_WU_Event,BT_WU_Rutine        ;BT WU change handling
+                _TEST_EVENT_          BT_RX_Event,BT_RX_Rutine        ;BT Receive Data Handling
+                _TEST_EVENT_          USB_RX_Event,USB_RX_Rutine      ;USB receive data handling
+                _TEST_EVENT_          ADC_Data_Event,ADC_Data_Rutine  ;ADC Data Handling
+                _TEST_EVENT_          Bat_ADC_Event,Bat_ADC_Rutine    ;ADC Data Handling
                 _SETUP_WDT_                                           ;reset WDT
-GoToLPM         bis.b                 #0x01,&P8OUT                    ;индикация LPM
-                bis                   #LPM0,SR                        ;переход в режим низкого потребления
+GoToLPM         bis.b                 #0x01,&P8OUT                    ;LPM indication
+                bis                   #LPM0,SR                        ;Entering low-power mode
                 nop        
-                bic.b                 #0x01,&P8OUT                    ;индикация LPM
+                bic.b                 #0x01,&P8OUT                    ;LPM indication
                 _SETUP_WDT_                                           ;reset WDT
                 tst.w                 &DeviceEvent
                 jz                    GoToLPM
                 jmp                   MainLoop
 ;________________________________________________________________________________________________________________
-GeneratorInit   ;настойка генератора
-                //bis.w                 #OSCOFF,SR                      ;запрещаем  LFXT1
-                bic.w                 #OFIE,&SFRIE1                   ;запрещаем прерывание oscillator fault
-                mov.w                 #(SELA__XT1CLK+SELS__DCOCLK+SELM__DCOCLK),&UCSCTL4 ;ACLK=XT1 - 32.766kГц
-                mov.w                 #DIVPA__1+DIVA__1+DIVS__1+DIVM__1,&UCSCTL5         ;ACLK/1(32.768кГц), SMCLK/1, MCLK/1
-                mov.w                 #XT2DRIVE_3+XT2OFF+XCAP_2,&UCSCTL6  ;настраиваем генератор
+GeneratorInit   ;Generator Init
+                //bis.w                 #OSCOFF,SR                     ;LFXT1 Disable
+                bic.w                 #OFIE,&SFRIE1                    ;disable interrupt oscillator fault
+                mov.w                 #(SELA__XT1CLK+SELS__DCOCLK+SELM__DCOCLK),&UCSCTL4 ;ACLK = XT1 - 32.766kHz
+                mov.w                 #DIVPA__1+DIVA__1+DIVS__1+DIVM__1,&UCSCTL5         ;ACLK/1(32.768kHz), SMCLK/1, MCLK/1
+                mov.w                 #XT2DRIVE_3+XT2OFF+XCAP_2,&UCSCTL6  ;Osc init
                 nop
-WaitXT1On       clr.w                 &UCSCTL7                        ;сброс ошибок генераторов
+WaitXT1On       clr.w                 &UCSCTL7                        ;Oscilators errors reset
                 _PAUSE_
-                bit.w                 #XT1LFOFFG,&UCSCTL7             ;ждем запуска XT1
+                bit.w                 #XT1LFOFFG,&UCSCTL7             ;Waiting XT1 start
                 jnz                   WaitXT1On
-                bic.w                 #OFIFG,&SFRIFG1                 ;сброс прерывание генератора
-                bis.w                 #OFIE,&SFRIE1                   ;разрешаем прерывание oscillator fault
-                mov.w                 #(SELA__XT1CLK+SELS__XT1CLK+SELM__XT1CLK),&UCSCTL4 ;ACLK=MCLK=SMCLK=XT1 - 32.766kГц
-                mov.w                 #DIVPA__1+DIVA__1+DIVS__1+DIVM__1,&UCSCTL5         ;ACLK/1(32.768кГц), SMCLK/1(32.768кГц), MCLK/1(32.768кГц)
-                bis.b                 #0x40,&P2SEL                    ;выход ACLK как переферия
-                call                  #GeneratorOn                    ;включаем генератор
+                bic.w                 #OFIFG,&SFRIFG1                 ;Osc. Interrupt Reset
+                bis.w                 #OFIE,&SFRIE1                   ;Enable oscillator fault interrupt
+                mov.w                 #(SELA__XT1CLK+SELS__XT1CLK+SELM__XT1CLK),&UCSCTL4 ;ACLK=MCLK=SMCLK=XT1 - 32.766kHz
+                mov.w                 #DIVPA__1+DIVA__1+DIVS__1+DIVM__1,&UCSCTL5         ;ACLK/1(32.768kHz), SMCLK/1(32.768kHz), MCLK/1(32.768kHz)
+                bis.b                 #0x40,&P2SEL                    ;ACLK output as peripheral
+                call                  #GeneratorOn                    ;Osc. Enable
                 ret
 ;________________________________________________________________________________________________________________
 GeneratorOn     ;включение генератора
-                _TEST_MODE_           XTGeneratorOn                   ;проверяем состояние
+                _TEST_MODE_           XTGeneratorOn                   ;State checking
                 jnz                   NoNeedOn
                 mov.w                 #PMMPW+PMMCOREV_3,&PMMCTL0      ;Vcore =1.9V
                 mov.w                 #SVMHE+SVSHE+SVSHRVL_1+SVSMHRRL_1,&SVSMHCTL ;High Side PMM, 2.18/2.3V
                 mov.w                 #SVMLE+SVSLE+SVSLRVL_1+SVSMLRRL_1,&SVSMLCTL ;Low Side PMM
-                mov.w                 #SVSHPE+SVSLPE,&PMMRIE          ;разрешаем сброс по Low/High Side PMM
-                bic.b                 #0x04,&P5DIR                    ;XT2IN как вход
-                bis.b                 #0x0C,&P5SEL                    ;XT2IN и XT2OUT как переферия
-                bic.w                 #OFIE,&SFRIE1                   ;запрещаем прерывание oscillator fault
-                bic.w                 #XT2OFF,&UCSCTL6                ;разрешаем генератор XT2
+                mov.w                 #SVSHPE+SVSLPE,&PMMRIE          ;Enable reset Low/High Side PMM
+                bic.b                 #0x04,&P5DIR                    ;XT2IN as input
+                bis.b                 #0x0C,&P5SEL                    ;XT2IN и XT2OUT as peripheral
+                bic.w                 #OFIE,&SFRIE1                   ;Disable oscillator fault interrupt
+                bic.w                 #XT2OFF,&UCSCTL6                ;XT2 Enable
                 _PAUSE_
 WaitXT2On       clr.w                 &UCSCTL7                        ;сброс ошибок генераторов
                 _PAUSE_
@@ -165,7 +167,7 @@ GeneratorOff    ;выключение генератора
 NoNeedOff       ret
 ;________________________________________________________________________________________________________________
 UNMI_Procedure  ;обработка прерываний NMI, oscillator fault, flash memory access violation
-                add.w                 &SYSUNIV,PC                     ;определем прерывание
+                add.w                 &SYSUNIV,PC                     ;Interrupt detection
                 reti                                                  ;no interrupt
                 reti                                                  ;NMIIFG
                 jmp                   OFIFGint                        ;OFIFG
@@ -179,7 +181,7 @@ OFIFGint        ;ошибка генератора
 ACCVIFGint      reti
 ;________________________________________________________________________________________________________________
 SYSNMI_Procedure
-                add.w                 &SYSSNIV,PC                     ;определем прерывание
+                add.w                 &SYSSNIV,PC                     ;Interrupt detection
                 reti                                                  ;no interrupt
                 reti                                                  ;SVMLIFG
                 reti                                                  ;SVMHIFG
@@ -192,103 +194,111 @@ SYSNMI_Procedure
                 reti                                                  ;reserved
 ;________________________________________________________________________________________________________________
 SetupPort       ;начальная настройка портов
-                mov.b                 #00000000b,&P1OUT               ;настраиваем порт 1
+                mov.b                 #00000000b,&P1OUT               ;Port 1 initialization
                 mov.b                 #11000001b,&P1DIR
                 mov.b                 #00000000b,&P1REN
                 mov.b                 #00000000b,&P1DS
                 mov.b                 #00000000b,&P1SEL
                 mov.b                 #00000000b,&P1IES
                 mov.b                 #00000000b,&P1IE
-                mov.b                 #00000000b,&P2OUT               ;настраиваем порт 2
+                
+                mov.b                 #00000000b,&P2OUT               ;Port 2 initialization
                 mov.b                 #01000000b,&P2DIR
                 mov.b                 #00000100b,&P2REN
                 mov.b                 #00000000b,&P2DS
                 mov.b                 #00000000b,&P2SEL
                 mov.b                 #00000000b,&P2IES
-                mov.b                 #00000000b,&P2IE
-                mov.b                 #01010000b,&P3OUT               ;настраиваем порт 3
+                mov.b                 #00000000b,&P2IE  
+                
+                mov.b                 #01010000b,&P3OUT               ;Port 3 initialization
                 mov.b                 #11011011b,&P3DIR
                 mov.b                 #00000000b,&P3REN
                 mov.b                 #00000000b,&P3DS
                 mov.b                 #00000000b,&P3SEL
-                mov.b                 #00000000b,&P4OUT               ;настраиваем порт 4
+                
+                mov.b                 #00000000b,&P4OUT               ;Port 4 initialization
                 mov.b                 #11010111b,&P4DIR
                 mov.b                 #00000000b,&P4REN
                 mov.b                 #00000000b,&P4DS
                 mov.b                 #00000000b,&P4SEL
-                mov.b                 #00000000b,&P5OUT               ;настраиваем порт 5
+                
+                mov.b                 #00000000b,&P5OUT               ;Port 5 initialization
                 mov.b                 #00111111b,&P5DIR
                 mov.b                 #11000000b,&P5REN
                 mov.b                 #00000000b,&P5DS
                 mov.b                 #00000000b,&P5SEL
-                mov.b                 #00000000b,&P6OUT               ;настраиваем порт 6
+
+                mov.b                 #00000000b,&P6OUT               ;Port 6 initialization
                 mov.b                 #11111110b,&P6DIR
                 mov.b                 #00000000b,&P6REN
                 mov.b                 #00000000b,&P6DS
                 mov.b                 #00000001b,&P6SEL
-                mov.b                 #00000000b,&P7OUT               ;настраиваем порт 7
+                
+                mov.b                 #00000000b,&P7OUT               ;Port 7 initialization
                 mov.b                 #11111110b,&P7DIR
                 mov.b                 #00000000b,&P7REN
                 mov.b                 #00000000b,&P7DS
                 mov.b                 #00000011b,&P7SEL
-                mov.b                 #00000000b,&P8OUT               ;настраиваем порт 8
+                
+                mov.b                 #00000000b,&P8OUT               ;Port 8 initialization
                 mov.b                 #11111111b,&P8DIR
                 mov.b                 #00000000b,&P8REN
                 mov.b                 #00000000b,&P8DS
                 mov.b                 #00000000b,&P8SEL
+		
                 ret
 ;________________________________________________________________________________________________________________
-PORT1_Rutine    ;обработка прерываний Port1
-                bic.w                 #LPM3,0(SP)                     ;просыпаемся
+PORT1_Rutine    ;Port 1 Interrupt Handling
+                bic.w                 #LPM3,0(SP)                     ;Wake up
                 add                   &P1IV,PC
                 reti                                                  ;no int
                 reti                                                  ;Port1 bit0
                 reti                                                  ;Port1 bit1
                 reti                                                  ;Port1 bit2
                 reti                                                  ;Port1 bit3
-                jmp                   BT_RTS_Int                      ;Port1 bit4 спад RTS
-                jmp                   BT_RTS_Int                      ;Port1 bit5 фронт RTS
+                jmp                   BT_RTS_Int                      ;Port1 bit4 falling edge RTS
+                jmp                   BT_RTS_Int                      ;Port1 bit5 rising edge RTS
                 reti                                                  ;Port1 bit6
                 reti                                                  ;Port1 bit7
 ;________________________________________________________________________________________________________________
-BT_RTS_Int      ;обработка прерывания на изменение RTS
-                bic.w                 #LPM3,0(SP)                     ;просыпаемся
-                _SET_EVENT_           BT_WU_Event                     ;ставим событие
+BT_RTS_Int      ;RTS change handling routine
+                bic.w                 #LPM3,0(SP)                     ;wake up
+                _SET_EVENT_           BT_WU_Event                     ;set event
                 reti
 ;________________________________________________________________________________________________________________
-PORT2_Rutine    ;обработка прерываний Port2
-                bic.w                 #LPM3,0(SP)                     ;просыпаемся
+PORT2_Rutine    ;Port 2 Interrupt Handling
+                bic.w                 #LPM3,0(SP)                     ;wake up
                 add                   &P2IV,PC
                 reti                                                  ;no int
-                jmp                   BT_WU_Int                       ;Port1 bit0 спад BT_WU
-                jmp                   BT_WU_Int                       ;Port1 bit1 фронт BT_WU
+                jmp                   BT_WU_Int                       ;Port1 bit0 falling edge BT_WU
+                jmp                   BT_WU_Int                       ;Port1 bit1 rising edge BT_WU
                 reti                                                  ;Port1 bit2
-                jmp                   BT_LS_Int                       ;Port1 bit3 спад BT_LS
-                jmp                   BT_LS_Int                       ;Port1 bit4 фронт BT_LS
+                jmp                   BT_LS_Int                       ;Port1 bit3 falling edge BT_LS
+                jmp                   BT_LS_Int                       ;Port1 bit4 risining edge BT_LS
                 reti                                                  ;Port1 bit5
                 reti                                                  ;Port1 bit6
-                jmp                   ECG_DRDY_Int                    ;Port1 bit7 спад ECG_DRDY
+                jmp                   ECG_DRDY_Int                    ;Port1 bit7 falling edge ECG_DRDY
 ;________________________________________________________________________________________________________________
-BT_LS_Int       ;обработка прерывания на изменение LS
-                bic.w                 #LPM3,0(SP)                     ;просыпаемся
-                _SET_EVENT_           BT_LS_Event                     ;ставим событие
+BT_LS_Int       ;LS change interrupt handling
+                bic.w                 #LPM3,0(SP)                     ;wake up
+                _SET_EVENT_           BT_LS_Event                     ;set event
                 reti
 ;________________________________________________________________________________________________________________
-BT_WU_Int       ;обработка прерывания на изменение WU
-                bic.w                 #LPM3,0(SP)                     ;просыпаемся
-                _SET_EVENT_           BT_WU_Event                     ;ставим событие
+BT_WU_Int       ;WU change interrupt handling
+                bic.w                 #LPM3,0(SP)                     ;wake up
+                _SET_EVENT_           BT_WU_Event                     ;set event
                 reti
 ;________________________________________________________________________________________________________________
-ECG_DRDY_Int    ;обработка прерывания готовности данных
+ECG_DRDY_Int    ;ECG data ready interrupt handler
                 bic.b                 #0x01,&P3OUT                    ;CS = 0
-                mov.w                 &ADCBufInPnt,&DMA0DAL           ;куда читать данные
-                bis.w                 #DMAEN,&DMA0CTL                 ;разрешаем DMA0 на прием данных
-                bis.w                 #DMAEN,&DMA1CTL                 ;разрешаем DMA0 на передачу данных
+                mov.w                 &ADCBufInPnt,&DMA0DAL           ;Buffer for data reading
+                bis.w                 #DMAEN,&DMA0CTL                 ;Enable DMA0 for data receiving
+                bis.w                 #DMAEN,&DMA1CTL                 ;Enable DMA0 for data transmitting
                 reti
 ;################################################################################################################
-                COMMON                INTVEC                          ;сегмент векторов прерываний
+                COMMON                INTVEC                          ;Interrupt vectors segment
 ;________________________________________________________________________________________________________________
-                ORG                   RESET_VECTOR                    ;вектор сброса
+                ORG                   RESET_VECTOR                    ;Reset vector
                 DW                    RESET_RUTINE
 ;________________________________________________________________________________________________________________
                 ORG                   UNMI_VECTOR                     ;User NMI: NMI, oscillator fault, flash memory access violation
