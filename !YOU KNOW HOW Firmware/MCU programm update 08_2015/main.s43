@@ -19,6 +19,16 @@ EXTERN          SetBTLPOHF
 EXTERN          SetBTLPOLF
 EXTERN          InitWriteInfoMemory
 EXTERN          Bat_ADC_Rutine
+
+EXTERN          SPI_Flash_Earse
+EXTERN      	SPIF_Mutex
+EXTERN      	SPIF_Mutex
+EXTERN      	SPIF_Buf
+EXTERN      	SPIF_Command
+EXTERN      	SPIF_Page_Num
+EXTERN      	SPIF_Byte_Num
+EXTERN      	SPIF_Sector
+
 ;________________________________________________________________________________________________________________
 EXPORT          DeviceEvent
 EXPORT          DeviceMode
@@ -26,22 +36,23 @@ EXPORT          GeneratorOn
 EXPORT          GeneratorOff
 EXPORT          DeviceTypeVer
 ;################################################################################################################
-                RSEG                  CSTACK                          ;Stack Segment
+                RSEG                  CSTACK                    ;Stack Segment
 ;________________________________________________________________________________________________________________
                 DS                     256
 ;################################################################################################################
-                RSEG                  DATA16_N                        ;Data segment
+                RSEG                  DATA16_N                  ;Data segment
 ;________________________________________________________________________________________________________________
 DeviceTypeVer   DS              4                               ;Device type and version
 DeviceMode      DS              2                               ;Working mode     
 DeviceEvent     DS              2                               ;Events
 
 TestByte	DS		1				;Test byte
+
 ;################################################################################################################
-                RSEG                  CODE                            ;Code segment
+                RSEG                  CODE                      ;Code segment
 ;________________________________________________________________________________________________________________
 RESET_RUTINE    add.w                 &SYSRSTIV,PC                    ;Interrupt detection
-                jmp                   MainProgStart;MAKE_HV_RESET                   ;no interrupt
+                jmp                   MAKE_HV_RESET    ;no interrupt  MainProgStart
                 jmp                   MAKE_HV_RESET                   ;brownout (BOR)
                 jmp                   MainProgStart                   ;RST/NMI (POR)www
                 jmp                   MAKE_HV_RESET                   ;DoBOR (BOR)
@@ -85,6 +96,10 @@ MainProgStart   _SETUP_WDT_                                           ;reset WDT
                 call                  #SetupBT                        ;BT Init
                 _SETUP_WDT_
                 call                  #SetupUSB                       ;USBs UART Init
+		
+		;!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		_CALL_1DATA_	SPI_Flash_Earse, SPIF_Mutex	;ONLY FOR DEBUG. Should be removed
+				
 ;________________________________________________________________________________________________________________
 MainLoop        _TEST_EVENT_          TMR_10Hz_Event,TMR_10Hz_Rutine  ;Timer Interrupt
                 _TEST_EVENT_          BT_LS_Event,BT_LS_Rutine        ;BT LS change handling
@@ -245,15 +260,13 @@ SetupPort       ;начальная настройка портов
                 mov.b                 #00000000b,&P8REN
                 mov.b                 #00000000b,&P8DS
                 mov.b                 #00000000b,&P8SEL
-		
-		;bis.b		#00001000b, &P6OUT	;SPI Flash select
-		
+						 
                 ret
 ;________________________________________________________________________________________________________________
 PORT1_Rutine    ;Port 1 Interrupt Handling
                 bic.w                 #LPM3,0(SP)                     ;Wake up
                 add                   &P1IV,PC
-                reti                                                  ;no int
+                reti                                                   ;no int
                 reti                                                  ;Port1 bit0
                 reti                                                  ;Port1 bit1
                 reti                                                  ;Port1 bit2

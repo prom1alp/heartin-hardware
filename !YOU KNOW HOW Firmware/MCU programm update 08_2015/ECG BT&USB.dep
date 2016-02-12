@@ -16,31 +16,31 @@
       <file>$PROJ_DIR$\filter250Hz.h</file>
       <file>$PROJ_DIR$\filter1000Hz.h</file>
       <file>$PROJ_DIR$\asm.s43</file>
-      <file>$PROJ_DIR$\filter500Hz.h</file>
       <file>$PROJ_DIR$\Debug\Exe\ECG BT&amp;USB.d43</file>
       <file>$PROJ_DIR$\Debug\Obj\main.r43</file>
+      <file>$PROJ_DIR$\filter500Hz.h</file>
       <file>$PROJ_DIR$\register.h</file>
+      <file>$TOOLKIT_DIR$\config\linker\multiplier32.xcl</file>
       <file>$PROJ_DIR$\Debug\Obj\filter.r43</file>
       <file>$TOOLKIT_DIR$\config\linker\lnk430f5418a.xcl</file>
-      <file>$TOOLKIT_DIR$\config\linker\multiplier32.xcl</file>
       <file>$PROJ_DIR$\Debug\Obj\usb.r43</file>
       <file>$PROJ_DIR$\main.h</file>
-      <file>$PROJ_DIR$\Debug\Obj\info_memory.r43</file>
-      <file>$PROJ_DIR$\Debug\List\ECG BT&amp;USB.map</file>
       <file>$PROJ_DIR$\serialprot.h</file>
       <file>$PROJ_DIR$\Debug\Obj\adc.r43</file>
       <file>$PROJ_DIR$\bluetooth.h</file>
       <file>$TOOLKIT_DIR$\inc\msp430x54xa.h</file>
+      <file>$PROJ_DIR$\Debug\Obj\info_memory.r43</file>
+      <file>$PROJ_DIR$\Debug\List\ECG BT&amp;USB.map</file>
       <file>$PROJ_DIR$\Debug\Obj\asm.r43</file>
       <file>$PROJ_DIR$\Debug\Obj\timer.r43</file>
       <file>$PROJ_DIR$\adc.h</file>
       <file>$PROJ_DIR$\Debug\List\filter.lst</file>
       <file>$PROJ_DIR$\Debug\List\main.lst</file>
-      <file>$PROJ_DIR$\Debug\Obj\bluetooth.r43</file>
       <file>$PROJ_DIR$\Debug\List\usb.lst</file>
       <file>$PROJ_DIR$\Debug\List\timer.lst</file>
-      <file>$PROJ_DIR$\Debug\List\info_memory.lst</file>
       <file>$PROJ_DIR$\Debug\List\adc.lst</file>
+      <file>$PROJ_DIR$\Debug\Obj\bluetooth.r43</file>
+      <file>$PROJ_DIR$\Debug\List\info_memory.lst</file>
       <file>$PROJ_DIR$\Debug\List\bluetooth.lst</file>
     </outputs>
     <file>
@@ -48,7 +48,7 @@
       <outputs>
         <tool>
           <name>XLINK</name>
-          <file> 11 20</file>
+          <file> 10 24</file>
         </tool>
       </outputs>
     </file>
@@ -57,13 +57,13 @@
       <outputs>
         <tool>
           <name>A430</name>
-          <file> 30 35</file>
+          <file> 33 35</file>
         </tool>
       </outputs>
       <inputs>
         <tool>
           <name>A430</name>
-          <file> 24 23 21 13 18 27</file>
+          <file> 22 21 19 13 18 27</file>
         </tool>
       </inputs>
     </file>
@@ -72,13 +72,13 @@
       <outputs>
         <tool>
           <name>A430</name>
-          <file> 14 28</file>
+          <file> 15 28</file>
         </tool>
       </outputs>
       <inputs>
         <tool>
           <name>A430</name>
-          <file> 24 13 27</file>
+          <file> 22 13 27</file>
         </tool>
       </inputs>
     </file>
@@ -87,13 +87,13 @@
       <outputs>
         <tool>
           <name>A430</name>
-          <file> 22 34</file>
+          <file> 20 32</file>
         </tool>
       </outputs>
       <inputs>
         <tool>
           <name>A430</name>
-          <file> 24 13 27 18 7 10 8</file>
+          <file> 22 13 27 18 7 12 8</file>
         </tool>
       </inputs>
     </file>
@@ -102,13 +102,13 @@
       <outputs>
         <tool>
           <name>A430</name>
-          <file> 19 33</file>
+          <file> 23 34</file>
         </tool>
       </outputs>
       <inputs>
         <tool>
           <name>A430</name>
-          <file> 24 13 18 21</file>
+          <file> 22 13 18 19</file>
         </tool>
       </inputs>
     </file>
@@ -117,13 +117,13 @@
       <outputs>
         <tool>
           <name>A430</name>
-          <file> 12 29</file>
+          <file> 11 29</file>
         </tool>
       </outputs>
       <inputs>
         <tool>
           <name>A430</name>
-          <file> 24 18 13 21</file>
+          <file> 22 18 13 19</file>
         </tool>
       </inputs>
     </file>
@@ -132,13 +132,13 @@
       <outputs>
         <tool>
           <name>A430</name>
-          <file> 26 32</file>
+          <file> 26 31</file>
         </tool>
       </outputs>
       <inputs>
         <tool>
           <name>A430</name>
-          <file> 24 13 18</file>
+          <file> 22 13 18</file>
         </tool>
       </inputs>
     </file>
@@ -147,13 +147,13 @@
       <outputs>
         <tool>
           <name>A430</name>
-          <file> 17 31</file>
+          <file> 17 30</file>
         </tool>
       </outputs>
       <inputs>
         <tool>
           <name>A430</name>
-          <file> 24 21 13 18 27</file>
+          <file> 22 19 13 18 27</file>
         </tool>
       </inputs>
     </file>
@@ -171,13 +171,13 @@
       <outputs>
         <tool>
           <name>XLINK</name>
-          <file> 20</file>
+          <file> 24</file>
         </tool>
       </outputs>
       <inputs>
         <tool>
           <name>XLINK</name>
-          <file> 15 16 22 30 14 19 12 26 17</file>
+          <file> 16 14 20 33 15 23 11 26 17</file>
         </tool>
       </inputs>
     </file>

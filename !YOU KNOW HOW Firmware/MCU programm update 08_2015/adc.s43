@@ -22,6 +22,8 @@ EXTERN          USBFilerSize
 EXTERN          USBFiler
 EXTERN          SendUSBPacket
 EXTERN          MakeFilter
+
+
 ;________________________________________________________________________________________________________________
 EXPORT          InitADC
 EXPORT          ADCOn
@@ -35,8 +37,15 @@ EXPORT          Mode2Filter
 EXPORT          Mode3FilterSize
 EXPORT          Mode3Filter
 EXPORT          FilterBuffer
+EXPORT 		SPI_Flash_Earse
 
-;export 		SPI_Flash_Write
+EXPORT 		SPIF_Mutex
+EXPORT 		SPIF_Buf
+EXPORT 		SPIF_Command
+EXPORT 		SPIF_Page_Num
+EXPORT 		SPIF_Byte_Num
+EXPORT 		SPIF_Sector
+
 ;################################################################################################################
                 RSEG                  DATA16_N                        ;data segment
 ;________________________________________________________________________________________________________________
@@ -48,6 +57,13 @@ FilterBufPnt    DS                    2                               ;pointer t
 FilterBufPntOld DS                    2                               ;pointer to filter's fuffer
 FilterBuffer    DS                    FilterBuffSize                  ;filtesr's buffer
 OutBuffer       DS                    8*3+2                           ;буфер выходного отсчета фильтра
+
+SPIF_Mutex    DS	1	;Flag of using SPI Flash (Used, when == 1)
+SPIF_Buf      DS	256	;256 bytes buffer for SPI Flash page programming
+SPIF_Command  DS	1	;Command
+SPIF_Page_Num DS	2	;Page Number
+SPIF_Byte_Num DS	1	;Number of byte is written
+SPIF_Sector   DS	3	;Adress of SPI Flash Sector
 ;################################################################################################################
                 RSEG                  CODE                            ;Code segment
 ;________________________________________________________________________________________________________________
@@ -339,68 +355,68 @@ NoADCIntBufBrd  mov.w                 REG1,&ADCBufInPnt               ;сохраняем
 ;################   SPI FLASH Handling routine  ################################
 ;###############################################################################
 
-SPIF_Mutex    DS	1	;Flag of using SPI Flash (Used, when == 1)
-SPIF_Buf      DS	256	;256 bytes buffer for SPI Flash page programming
-SPIF_Command  DS	1	;Command
-SPIF_Page_Num DS	2	;Page Number
-SPIF_Byte_Num DS	1	;Number of byte is written
-SPIF_Sector   DS	3	;Adress of SPI Flash Sector
+
 
 
 ;-------------------------------------------------------------------------------
+;Sector, Block or Full Chip Earse (depends from SPIF_Command value)
+;SPIF_Command value should be:	0x20 - Earse 4KB Sector
+;				0x52 - Earse 32KB Sector
+;				0xD8 - Easre 64KB Sector
+;				0xC7 - Earse Chip
 ;-------------------------------------------------------------------------------
-SPI_Flash_4KB_Earse:
-		mov.b		#00000001b, tmp
-		mov.b		tmp, SPIF_Mutex    	;Chooze memory
+SPI_Flash_Earse
+		cmp.b		SPIF_Command, 0x20
+		jz		Perform_Earse
+		cmp.b		SPIF_Command, 0x52
+		jz		Perform_Earse
+		cmp.b		SPIF_Command, 0xD8
+		jz		Perform_Earse
+		cmp.b		SPIF_Command, 0xC7
+		jz		Perform_Earse
+		ret		;If no earse command found, then exit
 		
+Perform_Earse
+		mov.b		#00000001b, SPIF_Mutex  ;Chooze memory
 		bis.b		#00001000b, &P6OUT	;SPI Flash select
-		
+
 		clr		tmp
 		mov.b           &UCB0RXBUF, tmp      	;Reset SPI Rx Flag
 		bic.b		#0x01, &P3OUT		;CS = 0
-						
-		mov.b		#0x06, tmp		;Send Write Enable
-		mov.b		tmp, &UCB0TXBUF		
-SPI_Sending:	bit.b           #UCRXIFG,&UCB0IFG
+
+		mov.b		#0x06, &UCB0TXBUF	;Send Write Enable
+SPI_Sending	bit.b           #UCRXIFG,&UCB0IFG
 		jz		SPI_Sending
 		bis.b		#0x01, &P3OUT		;CS = 1
 		_CS_PAUSE_
 ;-------------------------------------------------------------------------------
-		clr		tmp
 		mov.b           &UCB0RXBUF, tmp      	;Reset SPI Rx Flag
 		
 		bic.b		#0x01, &P3OUT		;CS = 0
-		mov.b		#0x20, tmp		;Earse 4KB Sector com.
-		mov.b		tmp, &UCB0TXBUF
-SPI_Sending1: 	bit.b           #UCRXIFG,&UCB0IFG
+		mov.b		SPIF_Command, &UCB0TXBUF;Send Earse subcommand
+SPI_Sending1 	bit.b           #UCRXIFG,&UCB0IFG
 		jz		SPI_Sending1
 		
-		clr		tmp			;Write Sector Adress
-		mov.b 		tmp, SPIF_Sector
-		mov.b 		tmp, SPIF_Sector+1
-		mov.b 		tmp, SPIF_Sector+2
+		cmp.b		SPIF_Command, 0xC7
+		jz		Earse_Exit
 		
-		clr		tmp			;Reset SPI Rx Flag
-		mov.b           &UCB0RXBUF, tmp
-		mov.b		SPIF_Sector, tmp	;1st Adress Byte
-		mov.b		tmp, &UCB0TXBUF
-SPI_Sending2: 	bit.b           #UCRXIFG,&UCB0IFG
+		mov.b           &UCB0RXBUF, tmp		;Reset SPI Rx Flag
+		
+		mov.b		SPIF_Sector, &UCB0TXBUF	;1st Adress Byte
+SPI_Sending2 	bit.b           #UCRXIFG,&UCB0IFG
 		jz		SPI_Sending2
 	
-		clr		tmp			;Reset SPI Rx Flag
-		mov.b           &UCB0RXBUF, tmp      	
-		mov.b		SPIF_Sector, tmp	;2nd Adress Byte
-		mov.b		tmp, &UCB0TXBUF
-SPI_Sending3: 	bit.b           #UCRXIFG,&UCB0IFG
+		mov.b           &UCB0RXBUF, tmp      	;Reset SPI Rx Flag
+		mov.b		SPIF_Sector+1, &UCB0TXBUF ;2nd Adress Byte
+SPI_Sending3 	bit.b           #UCRXIFG,&UCB0IFG
 		jz		SPI_Sending3
 		
-		clr		tmp			;Reset SPI Rx Flag
-		mov.b           &UCB0RXBUF, tmp      	
-		mov.b		SPIF_Sector, tmp	;3rd Adress Byte
-		mov.b		tmp, &UCB0TXBUF
-SPI_Sending4: 	bit.b           #UCRXIFG,&UCB0IFG
+		mov.b           &UCB0RXBUF, tmp      	;Reset SPI Rx Flag
+		mov.b		SPIF_Sector+2, &UCB0TXBUF ;3rd Adress Byte
+SPI_Sending4 	bit.b           #UCRXIFG,&UCB0IFG
 		jz		SPI_Sending4
-		
+
+Earse_Exit
 		bis.b		#0x01, &P3OUT		;CS = 1
 		_CS_PAUSE_
 		ret
